@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Room Details | The Rogers Hotel</title>
+    <meta name="description" content="Room details at The Rogers Hotel in Tuscaloosa, Alabama.">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div id="page" class="site">
+
+    <a class="visually-hidden-focusable skip-link" href="#main">Skip to main content</a>
+
+    <!-- Navigation -->
+    <header>
+        <nav class="navbar navbar-expand-lg bg-white border-bottom site-nav" aria-label="Main navigation">
+            <div class="container">
+                <a class="navbar-brand" href="index.html">
+                    The Rogers Hotel
+                    <span class="brand-location">Tuscaloosa</span>
+                </a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav"
+                        aria-controls="mainNav" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="mainNav">
+                    <ul class="navbar-nav ms-auto align-items-lg-center">
+                        <li class="nav-item"><a class="nav-link active" href="rooms.html">Rooms</a></li>
+                        <li class="nav-item"><a class="nav-link" href="index.html#amenities">Amenities</a></li>
+                        <li class="nav-item"><a class="nav-link" href="index.html#location">Location</a></li>
+                    </ul>
+                    <a class="btn btn-primary ms-lg-3 my-2 my-lg-0" href="index.html#search">Book Now</a>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+    <main id="main" class="section pt-4">
+        <div class="container">
+
+            <!-- Breadcrumb + back link -->
+            <div class="d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-2 mb-4">
+                <nav aria-label="Breadcrumb">
+                    <ol class="breadcrumb mb-0">
+                        <li class="breadcrumb-item"><a href="index.html">Home</a></li>
+                        <li class="breadcrumb-item"><a href="rooms.html" class="js-rooms-link">Rooms</a></li>
+                        <li class="breadcrumb-item active" aria-current="page" id="breadcrumbRoom">Room Details</li>
+                    </ol>
+                </nav>
+                <a href="rooms.html" class="btn btn-outline-dark btn-sm js-rooms-link">
+                    <i class="bi bi-arrow-left me-1" aria-hidden="true"></i> Back to Rooms
+                </a>
+            </div>
+
+            <!-- Room not found -->
+            <div class="empty-state d-none" id="roomNotFound">
+                <h1 class="h4 mb-2">Room not found</h1>
+                <p class="text-body-secondary mb-3">We couldn't find the room you selected. Please return to the room list and choose a room.</p>
+                <a href="rooms.html" class="btn btn-primary js-rooms-link">Back to Rooms</a>
+            </div>
+
+            <!-- Room details -->
+            <div class="row g-4 g-lg-5" id="roomDetail">
+                <div class="col-lg-8">
+                    <div class="photo-placeholder photo-placeholder--wide mb-2" role="img" id="mainPhoto"
+                         aria-label="Photo placeholder: room">PHOTO</div>
+                    <div class="row g-2 mb-4">
+                        <div class="col-4">
+                            <div class="photo-placeholder photo-placeholder--small" role="img" aria-label="Photo placeholder: bed area">PHOTO</div>
+                        </div>
+                        <div class="col-4">
+                            <div class="photo-placeholder photo-placeholder--small" role="img" aria-label="Photo placeholder: bathroom">PHOTO</div>
+                        </div>
+                        <div class="col-4">
+                            <div class="photo-placeholder photo-placeholder--small" role="img" aria-label="Photo placeholder: room amenities">PHOTO</div>
+                        </div>
+                    </div>
+
+                    <p class="room-meta mb-1" id="roomMeta"></p>
+                    <h1 class="page-title mb-3" id="roomName">Room</h1>
+                    <p class="room-description" id="roomDescription"></p>
+
+                    <hr class="my-4">
+
+                    <div class="row g-4">
+                        <div class="col-md-6">
+                            <h2 class="h6 detail-heading">Sleeping arrangement</h2>
+                            <p class="mb-0" id="roomSleeping"></p>
+                        </div>
+                        <div class="col-md-6">
+                            <h2 class="h6 detail-heading">Room details</h2>
+                            <dl class="detail-list mb-0">
+                                <div><dt>Room type</dt><dd id="detailType"></dd></div>
+                                <div><dt>Bed type</dt><dd id="detailBed"></dd></div>
+                                <div><dt>Floor</dt><dd id="detailFloor"></dd></div>
+                                <div><dt>Approx. size</dt><dd id="detailSize"></dd></div>
+                                <div><dt>Sleeps</dt><dd id="detailGuests"></dd></div>
+                            </dl>
+                        </div>
+                    </div>
+
+                    <hr class="my-4">
+
+                    <h2 class="h6 detail-heading">Room amenities</h2>
+                    <ul class="amenity-list" id="roomAmenities"></ul>
+
+                    <div class="suite-features d-none" id="suiteFeatures">
+                        <hr class="my-4">
+                        <h2 class="h6 detail-heading">Suite features</h2>
+                        <ul class="amenity-list" id="suiteFeatureList"></ul>
+                    </div>
+                </div>
+
+                <!-- Booking summary -->
+                <div class="col-lg-4">
+                    <aside class="booking-panel" id="reserve" aria-labelledby="bookingHeading">
+                        <h2 id="bookingHeading" class="h6 detail-heading mb-3">Your stay</h2>
+
+                        <div class="price-block mb-3">
+                            <p class="mb-0"><span class="price">$100</span> <span class="text-body-secondary">/ night, Sun&ndash;Thu</span></p>
+                            <p class="mb-1"><span class="price">$150</span> <span class="text-body-secondary">/ night, Fri &amp; Sat</span></p>
+                            <span class="rate-label">Example default rates</span>
+                        </div>
+
+                        <dl class="detail-list mb-3">
+                            <div><dt>Check-in</dt><dd id="stayCheckin">Not selected</dd></div>
+                            <div><dt>Check-out</dt><dd id="stayCheckout">Not selected</dd></div>
+                            <div><dt>Guests</dt><dd id="stayGuests">Not selected</dd></div>
+                        </dl>
+
+                        <div id="stayEstimate" class="d-none">
+                            <dl class="detail-list estimate-list mb-3" id="estimateLines"></dl>
+                            <div class="d-flex justify-content-between fw-semibold border-top pt-2 mb-1">
+                                <span>Estimated total</span>
+                                <span id="estimateTotal"></span>
+                            </div>
+                            <p class="small text-body-secondary mb-3">Before taxes and fees. Based on example rates.</p>
+                        </div>
+
+                        <p class="small text-body-secondary d-none" id="stayMissing">
+                            Select your dates to see an estimated total.
+                        </p>
+
+                        <div class="alert alert-light border small d-none" id="capacityNote" role="status"></div>
+
+                        <div class="d-grid gap-2">
+                            <button type="button" class="btn btn-primary btn-lg" id="reserveButton"
+                                    data-bs-toggle="modal" data-bs-target="#reserveModal">Reserve This Room</button>
+                            <a href="index.html#search" class="btn btn-link btn-sm" id="changeDates">Change dates or guests</a>
+                        </div>
+                    </aside>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Reservation modal (prototype only, no booking is made) -->
+    <div class="modal fade" id="reserveModal" tabindex="-1" aria-labelledby="reserveModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title h5" id="reserveModalLabel">Review your selection</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <dl class="detail-list mb-3" id="reserveSummary"></dl>
+                    <p class="small text-body-secondary mb-0">
+                        This is a Sprint 1 prototype. Online reservations and payment are not available yet,
+                        and no reservation has been made.
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <a href="rooms.html" class="btn btn-outline-dark js-rooms-link">Back to Rooms</a>
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Done</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="site-footer border-top">
+        <div class="container">
+            <div class="d-flex flex-column flex-md-row justify-content-between gap-2">
+                <p class="mb-0"><span class="footer-brand">The Rogers Hotel</span> &middot; Tuscaloosa, Alabama</p>
+                <p class="mb-0 small text-body-secondary">Sprint 1 prototype. Rooms and rates shown are examples only.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="js/script.js"></script>
+</div>
+</body>
+</html>

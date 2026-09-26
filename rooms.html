@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Available Rooms | The Rogers Hotel</title>
+    <meta name="description" content="Browse and filter rooms at The Rogers Hotel in Tuscaloosa, Alabama.">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div id="page" class="site">
+
+    <a class="visually-hidden-focusable skip-link" href="#main">Skip to main content</a>
+
+    <!-- Navigation -->
+    <header>
+        <nav class="navbar navbar-expand-lg bg-white border-bottom site-nav" aria-label="Main navigation">
+            <div class="container">
+                <a class="navbar-brand" href="index.html">
+                    The Rogers Hotel
+                    <span class="brand-location">Tuscaloosa</span>
+                </a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav"
+                        aria-controls="mainNav" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="mainNav">
+                    <ul class="navbar-nav ms-auto align-items-lg-center">
+                        <li class="nav-item"><a class="nav-link active" aria-current="page" href="rooms.html">Rooms</a></li>
+                        <li class="nav-item"><a class="nav-link" href="index.html#amenities">Amenities</a></li>
+                        <li class="nav-item"><a class="nav-link" href="index.html#location">Location</a></li>
+                    </ul>
+                    <a class="btn btn-primary ms-lg-3 my-2 my-lg-0" href="index.html#search">Book Now</a>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+    <main id="main">
+
+        <!-- Search summary + date / room type search bar -->
+        <section class="search-summary section-muted border-bottom" aria-labelledby="roomsHeading">
+            <div class="container">
+                <div class="d-flex flex-column flex-md-row align-items-md-end justify-content-between gap-3 mb-4">
+                    <div>
+                        <h1 id="roomsHeading" class="page-title mb-3">Available Rooms</h1>
+                        <dl class="summary-list mb-0">
+                            <div>
+                                <dt>Check-in</dt>
+                                <dd id="summaryCheckin">Not selected</dd>
+                            </div>
+                            <div>
+                                <dt>Check-out</dt>
+                                <dd id="summaryCheckout">Not selected</dd>
+                            </div>
+                            <div>
+                                <dt>Guests</dt>
+                                <dd id="summaryGuests">2</dd>
+                            </div>
+                            <div>
+                                <dt>Nights</dt>
+                                <dd id="summaryNights">&mdash;</dd>
+                            </div>
+                        </dl>
+                    </div>
+                    <button class="btn btn-outline-dark" type="button" id="editSearchButton" aria-controls="searchBar">
+                        <i class="bi bi-pencil me-1" aria-hidden="true"></i> Edit Search
+                    </button>
+                </div>
+
+                <form class="search-panel js-search-form" id="searchBar" action="rooms.html" method="get"
+                      novalidate data-live="true" aria-label="Search by date and room type">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-6 col-md-3 col-lg">
+                            <label for="bar-checkin" class="form-label">Check-in</label>
+                            <input type="date" class="form-control js-checkin" id="bar-checkin" name="checkin">
+                            <div class="invalid-feedback">Choose a check-in date.</div>
+                        </div>
+                        <div class="col-6 col-md-3 col-lg">
+                            <label for="bar-checkout" class="form-label">Check-out</label>
+                            <input type="date" class="form-control js-checkout" id="bar-checkout" name="checkout">
+                            <div class="invalid-feedback">Check-out must be after check-in.</div>
+                        </div>
+                        <div class="col-6 col-md-3 col-lg">
+                            <label for="bar-guests" class="form-label">Guests</label>
+                            <select class="form-select" id="bar-guests" name="guests">
+                                <option value="1">1 guest</option>
+                                <option value="2" selected>2 guests</option>
+                                <option value="3">3 guests</option>
+                                <option value="4">4 guests</option>
+                            </select>
+                        </div>
+                        <div class="col-6 col-md-3 col-lg">
+                            <label for="bar-type" class="form-label">Room type</label>
+                            <select class="form-select" id="bar-type" name="type">
+                                <option value="any" selected>Any room type</option>
+                                <option value="standard-king">Standard King</option>
+                                <option value="standard-queen">Standard Queen</option>
+                                <option value="double-queen">Double Queen</option>
+                                <option value="twin">Twin Room</option>
+                                <option value="deluxe-king">Deluxe King</option>
+                                <option value="master-suite">Master Suite</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-lg-auto d-grid">
+                            <button type="submit" class="btn btn-primary px-4">Update Search</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <section class="section pt-4" aria-label="Room results">
+            <div class="container">
+                <p class="prototype-note small mb-4">
+                    <i class="bi bi-info-circle me-1" aria-hidden="true"></i>
+                    Prototype: rooms shown are examples and do not reflect live availability for the selected dates.
+                    Rates are example default rates ($100 weekday nights, $150 Friday and Saturday nights).
+                </p>
+
+                <div class="row g-4">
+                    <!-- Filters -->
+                    <aside class="col-lg-3" aria-labelledby="filtersHeading">
+                        <div class="filter-panel">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h2 id="filtersHeading" class="h6 mb-0 text-uppercase filter-heading">Filter Rooms</h2>
+                                <button type="button" class="btn btn-link btn-sm p-0" id="clearFilters">Clear all</button>
+                            </div>
+
+                            <fieldset class="mb-4">
+                                <legend class="filter-legend">Bed type</legend>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="filter-bed" value="king" id="filterKing">
+                                    <label class="form-check-label" for="filterKing">King</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="filter-bed" value="queen" id="filterQueen">
+                                    <label class="form-check-label" for="filterQueen">Queen</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="filter-bed" value="twin" id="filterTwin">
+                                    <label class="form-check-label" for="filterTwin">Twin</label>
+                                </div>
+                            </fieldset>
+
+                            <fieldset>
+                                <legend class="filter-legend">Floor</legend>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="filter-floor" value="1" id="filterFloor1">
+                                    <label class="form-check-label" for="filterFloor1">1st Floor</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="filter-floor" value="2" id="filterFloor2">
+                                    <label class="form-check-label" for="filterFloor2">2nd Floor</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="filter-floor" value="3" id="filterFloor3">
+                                    <label class="form-check-label" for="filterFloor3">3rd Floor</label>
+                                </div>
+                            </fieldset>
+                        </div>
+                    </aside>
+
+                    <!-- Results -->
+                    <div class="col-lg-9">
+                        <div class="d-flex flex-wrap justify-content-between align-items-baseline gap-2 mb-3">
+                            <h2 class="h5 mb-0">Room options</h2>
+                            <p class="small text-body-secondary mb-0" id="resultsCount" aria-live="polite"></p>
+                        </div>
+
+                        <div class="row g-4" id="roomResults">
+                            <noscript>
+                                <div class="col-12">
+                                    <p>JavaScript is required to display rooms in this prototype.</p>
+                                </div>
+                            </noscript>
+                        </div>
+
+                        <div class="empty-state d-none" id="noResults">
+                            <p class="mb-2 fw-semibold">No rooms match these filters.</p>
+                            <p class="small text-body-secondary mb-3">Try a different room type, bed type, floor, or number of guests.</p>
+                            <button type="button" class="btn btn-outline-dark btn-sm" id="clearFiltersEmpty">Clear filters</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="site-footer border-top">
+        <div class="container">
+            <div class="d-flex flex-column flex-md-row justify-content-between gap-2">
+                <p class="mb-0"><span class="footer-brand">The Rogers Hotel</span> &middot; Tuscaloosa, Alabama</p>
+                <p class="mb-0 small text-body-secondary">Sprint 1 prototype. Rooms and rates shown are examples only.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="js/script.js"></script>
+</div>
+</body>
+</html>
