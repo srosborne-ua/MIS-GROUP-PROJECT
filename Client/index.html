@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Druid City Hotel · Tuscaloosa, Alabama</title>
+    <meta name="description" content="Druid City Hotel — a boutique stay beneath the water oaks of downtown Tuscaloosa, Alabama. Check availability and book online.">
+    <link rel="icon" href="data:,">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600&display=swap">
+    <link rel="stylesheet" href="Resources/styles/index.css">
+    <script src="Resources/scripts/index.js" defer></script>
+</head>
+<body>
+
+<a class="skip-link" href="#main" data-skip-link>Skip to content</a>
+
+<header class="site-header">
+    <div class="container site-header__inner">
+        <a class="brand" href="#/home">Druid City <span class="brand__sub">Hotel</span></a>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
+        <nav id="site-nav" class="site-nav" aria-label="Primary">
+            <ul class="site-nav__list">
+                <li><a href="#/home" data-nav="home">The Hotel</a></li>
+                <li><a href="#/rooms" data-nav="rooms">Rooms &amp; Amenities</a></li>
+                <li><a href="#/search" data-nav="search" class="site-nav__cta">Book a stay</a></li>
+            </ul>
+        </nav>
+    </div>
+</header>
+
+<main id="main" tabindex="-1">
+
+    <!-- ============================================================
+         Home
+         ============================================================ -->
+    <section class="view" data-view="home" aria-labelledby="home-title" hidden>
+        <div class="hero">
+            <img class="hero__image" src="Resources/images/exterior.jpg"
+                 alt="The hotel's brick and limestone facade at dusk, lit warmly along a downtown street corner">
+            <div class="hero__content container">
+                <p class="eyebrow eyebrow--light">Downtown Tuscaloosa, Alabama</p>
+                <h1 id="home-title" class="hero__title" tabindex="-1">Rest beneath the water oaks.</h1>
+            </div>
+        </div>
+
+        <div class="band">
+            <form class="container quick-search" id="home-search" novalidate aria-labelledby="home-search-title">
+                <h2 id="home-search-title" class="visually-hidden">Check availability</h2>
+                <div class="field">
+                    <label for="home-checkin">Arrive</label>
+                    <input type="date" id="home-checkin" name="checkin" required>
+                </div>
+                <div class="field">
+                    <label for="home-checkout">Depart</label>
+                    <input type="date" id="home-checkout" name="checkout" required>
+                </div>
+                <div class="field">
+                    <label for="home-guests">Guests</label>
+                    <select id="home-guests" name="guests">
+                        <option value="1">1 guest</option>
+                        <option value="2" selected>2 guests</option>
+                        <option value="3">3 guests</option>
+                        <option value="4">4 guests</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn">Check availability</button>
+            </form>
+        </div>
+
+        <section class="section container" aria-labelledby="intro-title">
+            <div class="measure">
+                <p class="eyebrow">The House</p>
+                <h2 id="intro-title" class="display">A hundred and twenty rooms, two suites, and no hurry at all.</h2>
+                <p class="lede">Druid City Hotel keeps the pace of an old Southern town: unhurried mornings,
+                    long evenings, and a staff who remember how you take your coffee. Three storeys of quiet
+                    rooms sit a short stroll from the river, the Strip, and the stadium.</p>
+            </div>
+        </section>
+
+        <section class="section section--rule container split" aria-labelledby="lobby-title">
+            <img class="split__image" src="Resources/images/lobby.jpg"
+                 alt="The front desk: carved oak counter, marble plinths, and backlit quatrefoil screens">
+            <div class="split__text">
+                <p class="eyebrow">Arrival</p>
+                <h2 id="lobby-title" class="display display--sm">Oak, marble, and a warm hello.</h2>
+                <p>Step in from the street and the noise falls away. Check-in is a conversation, not a queue.
+                    Your key, a recommendation for supper, and the best route to wherever you are headed.</p>
+                <a class="link-arrow" href="#/rooms">See the rooms</a>
+            </div>
+        </section>
+
+        <section class="section section--rule container" aria-labelledby="amenities-title">
+            <p class="eyebrow">Amenities</p>
+            <h2 id="amenities-title" class="display display--sm">The small things, done properly.</h2>
+            <ul class="amenities" data-amenities></ul>
+        </section>
+
+        <section class="section section--rule container" aria-labelledby="place-title">
+            <div class="measure">
+                <p class="eyebrow">The Druid City</p>
+                <h2 id="place-title" class="display display--sm">Named for its oaks. Known for its Saturdays.</h2>
+                <p>Tuscaloosa earned its nickname from the water oaks that line its downtown streets. Stay
+                    with us for a graduation, a homecoming, a slow weekend on the Black Warrior River,
+                    or a fall Saturday when the whole town turns crimson.</p>
+                <a class="btn btn--ghost" href="#/search">Plan your stay</a>
+            </div>
+        </section>
+    </section>
+
+    <!-- ============================================================
+         Search and availability
+         ============================================================ -->
+    <section class="view" data-view="search" aria-labelledby="search-title" hidden>
+        <div class="container page-head">
+            <p class="eyebrow">Availability</p>
+            <h1 id="search-title" class="display" tabindex="-1">Find your room.</h1>
+        </div>
+
+        <div class="container">
+            <form id="search-form" class="search-form" novalidate aria-label="Search availability">
+                <div class="field">
+                    <label for="search-checkin">Arrive</label>
+                    <input type="date" id="search-checkin" name="checkin" required>
+                </div>
+                <div class="field">
+                    <label for="search-checkout">Depart</label>
+                    <input type="date" id="search-checkout" name="checkout" required>
+                </div>
+                <div class="field">
+                    <label for="search-guests">Guests</label>
+                    <select id="search-guests" name="guests">
+                        <option value="1">1 guest</option>
+                        <option value="2">2 guests</option>
+                        <option value="3">3 guests</option>
+                        <option value="4">4 guests</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="search-bed">Bed</label>
+                    <select id="search-bed" name="bed">
+                        <option value="any">Any bed</option>
+                        <option value="king">King</option>
+                        <option value="queen">Queen</option>
+                        <option value="twin">Twin</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="search-floor">Floor</label>
+                    <select id="search-floor" name="floor">
+                        <option value="any">Any floor</option>
+                        <option value="1">First floor</option>
+                        <option value="2">Second floor</option>
+                        <option value="3">Third floor</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn">Search</button>
+            </form>
+
+            <p id="search-status" class="status-line" role="status" aria-live="polite"></p>
+            <div id="search-results" class="results"></div>
+        </div>
+    </section>
+
+    <!-- ============================================================
+         Booking and checkout
+         ============================================================ -->
+    <section class="view" data-view="booking" aria-labelledby="booking-title" hidden>
+        <div class="container page-head">
+            <p class="eyebrow">Reservation</p>
+            <h1 id="booking-title" class="display" tabindex="-1">A few details, and it's yours.</h1>
+        </div>
+
+        <div class="container">
+            <div id="booking-unavailable" class="notice" role="alert" hidden></div>
+
+            <div id="booking-layout" class="checkout" hidden>
+                <aside class="checkout__summary" aria-labelledby="summary-title">
+                    <h2 id="summary-title" class="label-heading">Your stay</h2>
+                    <div id="booking-summary"></div>
+                </aside>
+
+                <form id="booking-form" class="checkout__form" novalidate aria-labelledby="booking-title">
+                    <fieldset class="fieldset">
+                        <legend>Guest</legend>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="bk-first">First name</label>
+                                <input type="text" id="bk-first" name="firstName" autocomplete="given-name" required>
+                            </div>
+                            <div class="field">
+                                <label for="bk-last">Last name</label>
+                                <input type="text" id="bk-last" name="lastName" autocomplete="family-name" required>
+                            </div>
+                            <div class="field">
+                                <label for="bk-email">Email</label>
+                                <input type="email" id="bk-email" name="email" autocomplete="email" required>
+                            </div>
+                            <div class="field">
+                                <label for="bk-phone">Mobile phone</label>
+                                <input type="tel" id="bk-phone" name="phone" autocomplete="tel" required>
+                            </div>
+                            <div class="field">
+                                <label for="bk-guests">Guests</label>
+                                <select id="bk-guests" name="guests"></select>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="bk-requests">Anything we should know? <span class="optional">Optional</span></label>
+                            <textarea id="bk-requests" name="requests" rows="3"
+                                      placeholder="Arrival time, an occasion, a feather-free pillow…"></textarea>
+                        </div>
+                    </fieldset>
+
+                    <fieldset class="fieldset">
+                        <legend>Payment</legend>
+                        <div class="choice-group">
+                            <label class="choice">
+                                <input type="radio" name="payWhen" value="now" checked>
+                                <span><strong>Pay now</strong> Settle the full stay today.</span>
+                            </label>
+                            <label class="choice">
+                                <input type="radio" name="payWhen" value="later">
+                                <span><strong>Pay at the hotel</strong> Settle at check-in.</span>
+                            </label>
+                        </div>
+
+                        <div id="card-fields" class="card-fields">
+                            <div class="field">
+                                <label for="bk-card-name">Name on card</label>
+                                <input type="text" id="bk-card-name" name="cardName" autocomplete="cc-name" required>
+                            </div>
+                            <div class="field">
+                                <label for="bk-card-number">Card number</label>
+                                <input type="text" id="bk-card-number" name="cardNumber" inputmode="numeric"
+                                       autocomplete="cc-number" maxlength="23" required>
+                            </div>
+                            <div class="grid-3">
+                                <div class="field">
+                                    <label for="bk-card-exp">Expires <span class="optional">MM/YY</span></label>
+                                    <input type="text" id="bk-card-exp" name="cardExp" inputmode="numeric"
+                                           autocomplete="cc-exp" maxlength="7" placeholder="MM/YY" required>
+                                </div>
+                                <div class="field">
+                                    <label for="bk-card-cvc">Security code</label>
+                                    <input type="text" id="bk-card-cvc" name="cardCvc" inputmode="numeric"
+                                           autocomplete="cc-csc" maxlength="4" required>
+                                </div>
+                                <div class="field">
+                                    <label for="bk-card-zip">Billing ZIP</label>
+                                    <input type="text" id="bk-card-zip" name="cardZip" inputmode="numeric"
+                                           autocomplete="postal-code" maxlength="5" required>
+                                </div>
+                            </div>
+                            <label class="check">
+                                <input type="checkbox" name="cardOnFile" id="bk-card-on-file">
+                                <span>Keep this card on file for incidentals and future stays. <span class="optional">Optional</span></span>
+                            </label>
+                        </div>
+                        <p class="fine-print">Prototype checkout: card details are checked in your browser only and are never stored or sent.</p>
+                    </fieldset>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn" id="booking-submit">Confirm reservation</button>
+                        <a class="link-arrow link-arrow--back" id="booking-back" href="#/search">Choose a different room</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============================================================
+         Confirmation
+         ============================================================ -->
+    <section class="view" data-view="confirmation" aria-labelledby="confirmation-title" hidden>
+        <div class="container page-head">
+            <p class="eyebrow">Confirmed</p>
+            <h1 id="confirmation-title" class="display" tabindex="-1">We'll leave the light on.</h1>
+        </div>
+        <div class="container" id="confirmation-body"></div>
+    </section>
+
+    <!-- ============================================================
+         Property and room information
+         ============================================================ -->
+    <section class="view" data-view="rooms" aria-labelledby="rooms-title" hidden>
+        <div class="container page-head">
+            <p class="eyebrow">Rooms &amp; Amenities</p>
+            <h1 id="rooms-title" class="display" tabindex="-1">Four ways to stay.</h1>
+            <p class="lede measure">Every room comes with the same good linens, the same quiet, and the same
+                promise: you will sleep well here. The difference is mostly a matter of how many of you there are.</p>
+        </div>
+
+        <div class="container">
+            <div class="room-types" data-room-types></div>
+        </div>
+
+        <section class="section section--rule container" aria-labelledby="rooms-amenities-title">
+            <p class="eyebrow">In every room</p>
+            <h2 id="rooms-amenities-title" class="display display--sm">Thoughtfully stocked.</h2>
+            <ul class="amenities" data-amenities></ul>
+        </section>
+
+        <section class="section section--rule container" aria-labelledby="facts-title">
+            <h2 id="facts-title" class="display display--sm">The particulars.</h2>
+            <dl class="facts">
+                <div><dt>Check-in</dt><dd>From 3:00 PM</dd></div>
+                <div><dt>Check-out</dt><dd>By 11:00 AM</dd></div>
+                <div><dt>Floors</dt><dd>Three, 40 rooms on each</dd></div>
+                <div><dt>Suites</dt><dd>Two master suites on the third floor</dd></div>
+                <div><dt>Rates</dt><dd data-rate-fact></dd></div>
+                <div><dt>Location</dt><dd>Downtown Tuscaloosa, Alabama</dd></div>
+            </dl>
+        </section>
+    </section>
+
+    <!-- ============================================================
+         Staff portal
+         ============================================================ -->
+    <section class="view view--staff" data-view="staff" aria-labelledby="staff-title" hidden>
+        <div class="container page-head page-head--compact">
+            <p class="eyebrow">Front desk</p>
+            <h1 id="staff-title" class="display display--sm" tabindex="-1">Staff Portal</h1>
+            <p class="fine-print">Sprint 1 prototype: no sign-in yet, and all data is sample data saved in this browser.
+                <button type="button" class="btn-text" data-action="reset-demo">Reset sample data</button></p>
+        </div>
+
+        <div class="container">
+            <nav class="tabs" aria-label="Staff sections">
+                <ul>
+                    <li><a href="#/staff/reservations" data-staff-tab="reservations">Reservations</a></li>
+                    <li><a href="#/staff/new" data-staff-tab="new">New reservation</a></li>
+                    <li><a href="#/staff/rooms" data-staff-tab="rooms">Rooms &amp; holds</a></li>
+                    <li><a href="#/staff/events" data-staff-tab="events">Event blocks</a></li>
+                    <li><a href="#/staff/rates" data-staff-tab="rates">Rates</a></li>
+                </ul>
+            </nav>
+
+            <!-- Reservations -->
+            <div class="panel" data-panel="reservations" hidden>
+                <h2 class="panel__title" tabindex="-1">Reservations</h2>
+                <dl class="stats" id="staff-stats"></dl>
+
+                <div id="res-detail"></div>
+
+                <form id="res-filters" class="filters" aria-label="Filter reservations">
+                    <div class="field field--grow">
+                        <label for="res-q">Search</label>
+                        <input type="search" id="res-q" name="q" placeholder="Name, email, confirmation, or room">
+                    </div>
+                    <div class="field">
+                        <label for="res-status">Show</label>
+                        <select id="res-status" name="status">
+                            <option value="upcoming">Upcoming</option>
+                            <option value="all">All</option>
+                            <option value="past">Past stays</option>
+                            <option value="cancelled">Cancelled</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="res-payment">Payment</label>
+                        <select id="res-payment" name="payment">
+                            <option value="any">Paid or not</option>
+                            <option value="paid">Paid</option>
+                            <option value="unpaid">Not paid</option>
+                        </select>
+                    </div>
+                </form>
+
+                <p id="res-count" class="status-line" role="status" aria-live="polite"></p>
+                <div id="res-table"></div>
+            </div>
+
+            <!-- New reservation -->
+            <div class="panel" data-panel="new" hidden>
+                <h2 class="panel__title" tabindex="-1">New reservation</h2>
+                <form id="staff-new-form" class="staff-form" novalidate>
+                    <fieldset class="fieldset">
+                        <legend>Stay</legend>
+                        <div class="grid-3">
+                            <div class="field">
+                                <label for="sn-checkin">Arrive</label>
+                                <input type="date" id="sn-checkin" name="checkin" required>
+                            </div>
+                            <div class="field">
+                                <label for="sn-checkout">Depart</label>
+                                <input type="date" id="sn-checkout" name="checkout" required>
+                            </div>
+                            <div class="field">
+                                <label for="sn-guests">Guests</label>
+                                <select id="sn-guests" name="guests">
+                                    <option value="1">1</option>
+                                    <option value="2" selected>2</option>
+                                    <option value="3">3</option>
+                                    <option value="4">4</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="sn-room">Room</label>
+                            <select id="sn-room" name="room" required></select>
+                        </div>
+                        <p id="sn-quote" class="status-line" role="status" aria-live="polite"></p>
+                    </fieldset>
+                    <fieldset class="fieldset">
+                        <legend>Guest</legend>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="sn-first">First name</label>
+                                <input type="text" id="sn-first" name="firstName" required>
+                            </div>
+                            <div class="field">
+                                <label for="sn-last">Last name</label>
+                                <input type="text" id="sn-last" name="lastName" required>
+                            </div>
+                            <div class="field">
+                                <label for="sn-email">Email</label>
+                                <input type="email" id="sn-email" name="email" required>
+                            </div>
+                            <div class="field">
+                                <label for="sn-phone">Phone</label>
+                                <input type="tel" id="sn-phone" name="phone" required>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="sn-requests">Notes <span class="optional">Optional</span></label>
+                            <textarea id="sn-requests" name="requests" rows="2"></textarea>
+                        </div>
+                    </fieldset>
+                    <fieldset class="fieldset">
+                        <legend>Payment</legend>
+                        <div class="field">
+                            <label for="sn-payment">Payment status</label>
+                            <select id="sn-payment" name="paymentStatus">
+                                <option value="unpaid">Not paid</option>
+                                <option value="paid">Paid</option>
+                            </select>
+                        </div>
+                    </fieldset>
+                    <div class="form-actions">
+                        <button type="submit" class="btn">Create reservation</button>
+                    </div>
+                    <p id="sn-message" class="notice" role="alert" hidden></p>
+                </form>
+            </div>
+
+            <!-- Rooms and holds -->
+            <div class="panel" data-panel="rooms" hidden>
+                <h2 class="panel__title" tabindex="-1">Rooms &amp; holds</h2>
+                <div class="filters">
+                    <div class="field">
+                        <label for="room-date">Showing the night of</label>
+                        <input type="date" id="room-date">
+                    </div>
+                </div>
+                <ul class="legend" aria-label="Legend">
+                    <li><span class="swatch swatch--available" aria-hidden="true"></span>Open</li>
+                    <li><span class="swatch swatch--reservation" aria-hidden="true"></span>Booked</li>
+                    <li><span class="swatch swatch--hold" aria-hidden="true"></span>Hold</li>
+                    <li><span class="swatch swatch--block" aria-hidden="true"></span>Event</li>
+                </ul>
+                <p id="room-summary" class="status-line" role="status" aria-live="polite"></p>
+                <div class="rooms-layout">
+                    <div id="room-grid"></div>
+                    <div id="room-panel" class="room-panel"></div>
+                </div>
+                <h3 class="label-heading section-gap">Active holds</h3>
+                <div id="holds-list"></div>
+            </div>
+
+            <!-- Event blocks -->
+            <div class="panel" data-panel="events" hidden>
+                <h2 class="panel__title" tabindex="-1">Event blocks</h2>
+                <form id="block-form" class="staff-form" novalidate>
+                    <div class="field">
+                        <label for="bl-name">Event name</label>
+                        <input type="text" id="bl-name" name="name" required placeholder="e.g. Whitfield–Bell wedding party">
+                    </div>
+                    <div class="grid-2">
+                        <div class="field">
+                            <label for="bl-start">First night</label>
+                            <input type="date" id="bl-start" name="start" required>
+                        </div>
+                        <div class="field">
+                            <label for="bl-end">Last night</label>
+                            <input type="date" id="bl-end" name="end" required>
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="bl-rooms">Rooms</label>
+                        <input type="text" id="bl-rooms" name="rooms" required aria-describedby="bl-rooms-hint">
+                        <p id="bl-rooms-hint" class="hint">Separate with commas; ranges work too, e.g. 201-210, 215.</p>
+                    </div>
+                    <div class="inline-actions">
+                        <span class="hint">Fill a whole floor:</span>
+                        <button type="button" class="btn-text" data-fill-floor="1">First</button>
+                        <button type="button" class="btn-text" data-fill-floor="2">Second</button>
+                        <button type="button" class="btn-text" data-fill-floor="3">Third</button>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn">Block rooms</button>
+                    </div>
+                    <p id="bl-message" class="notice" role="alert" hidden></p>
+                </form>
+                <h3 class="label-heading section-gap">Scheduled blocks</h3>
+                <div id="blocks-list"></div>
+            </div>
+
+            <!-- Rates -->
+            <div class="panel" data-panel="rates" hidden>
+                <h2 class="panel__title" tabindex="-1">Rates</h2>
+                <form id="rates-form" class="staff-form" novalidate>
+                    <fieldset class="fieldset">
+                        <legend>Default nightly rates</legend>
+                        <p class="hint">Weekend rates apply to Friday and Saturday nights. Changes apply to new searches and bookings; existing reservations keep their booked totals.</p>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="rt-weekday">Rooms, weeknight ($)</label>
+                                <input type="number" id="rt-weekday" name="weekday" min="1" step="1" required>
+                            </div>
+                            <div class="field">
+                                <label for="rt-weekend">Rooms, weekend night ($)</label>
+                                <input type="number" id="rt-weekend" name="weekend" min="1" step="1" required>
+                            </div>
+                            <div class="field">
+                                <label for="rt-suite-weekday">Master suites, weeknight ($)</label>
+                                <input type="number" id="rt-suite-weekday" name="suiteWeekday" min="1" step="1" required>
+                            </div>
+                            <div class="field">
+                                <label for="rt-suite-weekend">Master suites, weekend night ($)</label>
+                                <input type="number" id="rt-suite-weekend" name="suiteWeekend" min="1" step="1" required>
+                            </div>
+                        </div>
+                    </fieldset>
+                    <div class="form-actions">
+                        <button type="submit" class="btn">Save rates</button>
+                        <p id="rates-message" class="status-line" role="status" aria-live="polite"></p>
+                    </div>
+                </form>
+
+                <form id="override-form" class="staff-form section-gap" novalidate>
+                    <fieldset class="fieldset">
+                        <legend>Special date rates</legend>
+                        <p class="hint">Set one rate for every room on a single night, such as a home football weekend or graduation.</p>
+                        <div class="grid-3">
+                            <div class="field">
+                                <label for="ov-date">Night of</label>
+                                <input type="date" id="ov-date" name="date" required>
+                            </div>
+                            <div class="field">
+                                <label for="ov-amount">Rate ($)</label>
+                                <input type="number" id="ov-amount" name="amount" min="1" step="1" required>
+                            </div>
+                            <div class="field">
+                                <label for="ov-label">Reason</label>
+                                <input type="text" id="ov-label" name="label" placeholder="Home game" required>
+                            </div>
+                        </div>
+                    </fieldset>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn--ghost">Add special rate</button>
+                    </div>
+                </form>
+                <div id="overrides-list"></div>
+
+                <h3 class="label-heading section-gap">Next 14 nights</h3>
+                <div id="rate-preview"></div>
+            </div>
+        </div>
+    </section>
+
+</main>
+
+<footer class="site-footer">
+    <div class="container site-footer__inner">
+        <div>
+            <p class="brand brand--footer">Druid City <span class="brand__sub">Hotel</span></p>
+            <p class="fine-print">Downtown Tuscaloosa, Alabama</p>
+        </div>
+        <ul class="footer-links">
+            <li><a href="#/rooms">Rooms &amp; Amenities</a></li>
+            <li><a href="#/search">Book a stay</a></li>
+            <li><a href="#/staff">Staff portal</a></li>
+        </ul>
+        <p class="fine-print site-footer__note">Sprint 1 prototype. Rooms, rates, and reservations shown are sample data.</p>
+    </div>
+</footer>
+
+</body>
+</html>
