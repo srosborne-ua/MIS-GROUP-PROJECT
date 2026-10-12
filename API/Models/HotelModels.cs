@@ -1,0 +1,140 @@
+namespace API.Models;
+
+// JSON shapes match what the client in Client/Resources/scripts/index.js expects.
+// Dates are DateOnly ("yyyy-MM-dd"); timestamps are UTC DateTime.
+
+public record RoomType(string Name, string Bed, string BedLabel, int Sleeps, string Size, string Blurb);
+
+public record Room(int Number, int Floor, string Type);
+
+public record RoomSummary(int Number, int Floor);
+
+public class Rates
+{
+    public decimal Weekday { get; set; }
+    public decimal Weekend { get; set; }
+    public decimal SuiteWeekday { get; set; }
+    public decimal SuiteWeekend { get; set; }
+}
+
+public record RateOverride(DateOnly Date, decimal Amount, string Label);
+
+public record RatesResponse(Rates Rates, List<RateOverride> Overrides);
+
+// kind: "weekday" | "weekend" | "special". Label is only set for special rates.
+public record NightRate(DateOnly Date, decimal Amount, string Kind, string? Label = null);
+
+public record Quote(List<NightRate> Nights, decimal Total);
+
+public record AvailabilityGroup(string Type, List<RoomSummary> Rooms, Quote Quote);
+
+public record RoomCheck(Room Room, bool Available, Quote Quote);
+
+public record RatePreviewDay(DateOnly Date, NightRate Room, NightRate Suite);
+
+public class Guest
+{
+    public string FirstName { get; set; } = "";
+    public string LastName { get; set; } = "";
+    public string Email { get; set; } = "";
+    public string Phone { get; set; } = "";
+    public string Requests { get; set; } = "";
+}
+
+public record GuestMessage(DateTime At, string From, string Text);
+
+// Card details never reach the server: only paid/unpaid and the card-on-file opt-in.
+public class Reservation
+{
+    public string Id { get; set; } = "";
+    public int Room { get; set; }
+    public string Type { get; set; } = "";
+    public DateOnly Checkin { get; set; }
+    public DateOnly Checkout { get; set; }
+    public int Guests { get; set; }
+    public Guest Guest { get; set; } = new();
+    public List<NightRate> Nights { get; set; } = [];
+    public decimal Total { get; set; }
+    public string PaymentStatus { get; set; } = "unpaid";
+    public bool CardOnFile { get; set; }
+    public string Source { get; set; } = "web";
+    public string Status { get; set; } = "confirmed";
+    public DateTime CreatedAt { get; set; }
+    public List<GuestMessage> Messages { get; set; } = [];
+}
+
+// Holds and blocks store an inclusive last night in End.
+public record Hold(string Id, int Room, DateOnly Start, DateOnly End, string Reason, DateTime CreatedAt);
+
+public record Block(string Id, string Name, DateOnly Start, DateOnly End, List<int> Rooms, DateTime CreatedAt);
+
+public record RoomBoardEntry(int Number, int Floor, string Type, string Status, string Detail);
+
+public record ScheduleItem(string Kind, string Id, DateOnly Start, DateOnly End, string Label);
+
+/* ---------- Request bodies ----------
+   Dates arrive as strings so the store can return the same friendly
+   validation messages the client used to show. */
+
+public class AvailabilityQuery
+{
+    public string? Checkin { get; set; }
+    public string? Checkout { get; set; }
+    public int? Guests { get; set; }
+    public string? Bed { get; set; }
+    public string? Floor { get; set; }
+    public bool AllowPast { get; set; }
+}
+
+public class SaveRatesRequest
+{
+    public decimal? Weekday { get; set; }
+    public decimal? Weekend { get; set; }
+    public decimal? SuiteWeekday { get; set; }
+    public decimal? SuiteWeekend { get; set; }
+}
+
+public class RateOverrideRequest
+{
+    public string? Date { get; set; }
+    public decimal? Amount { get; set; }
+    public string? Label { get; set; }
+}
+
+public class CreateReservationRequest
+{
+    public int? Room { get; set; }
+    public string? Checkin { get; set; }
+    public string? Checkout { get; set; }
+    public int? Guests { get; set; }
+    public Guest? Guest { get; set; }
+    public string? PaymentStatus { get; set; }
+    public bool CardOnFile { get; set; }
+    public string? Source { get; set; }
+}
+
+public class PaymentStatusRequest
+{
+    public string? Status { get; set; }
+}
+
+public class GuestMessageRequest
+{
+    public string? Text { get; set; }
+}
+
+public class CreateHoldRequest
+{
+    public int? Room { get; set; }
+    public string? Start { get; set; }
+    public string? End { get; set; }
+    public string? Reason { get; set; }
+}
+
+public class CreateBlockRequest
+{
+    public string? Name { get; set; }
+    public string? Start { get; set; }
+    public string? End { get; set; }
+    public List<int>? Rooms { get; set; }
+}
