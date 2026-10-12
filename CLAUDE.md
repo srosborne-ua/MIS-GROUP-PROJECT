@@ -6,7 +6,7 @@ Guidance for Claude Code when working in this repository.
 
 End-to-end hotel booking platform for Mr. Rogers' hotel in Tuscaloosa, Alabama (branded **Druid City Hotel** in the client). Guests search availability, see the full cost of a stay, and book online. Staff manage reservations, availability, rates, and guest communication.
 
-The long-term project is an "AI Concierge for Hospitality Bookings", but **Sprint 1 is design and core reservation flow only: no AI functionality.**
+The long-term project is an "AI Concierge for Hospitality Bookings", but we are currently in **Sprint 5: integrating the ASP.NET Core backend (`API/`) with the existing front end.** No AI functionality yet.
 
 Success definition from the client: the site should make life easy, both for guests booking and for staff managing.
 
@@ -14,10 +14,11 @@ See [README.md](README.md) for the route table, hotel model details, and the run
 
 ## Running
 
-No build step, no dependencies. Open `Client/index.html` directly, or serve the folder:
+Run the API and serve the client (opening `index.html` from disk can't call the API):
 
 ```sh
-python3 -m http.server 8000 --directory Client
+dotnet run --project API --launch-profile http          # http://localhost:5269
+python3 -m http.server 8000 --directory Client          # http://localhost:8000
 ```
 
 There is no test suite or linter. Verify changes by loading the site and walking through the affected views on both a narrow (phone) and wide (desktop) viewport.
@@ -25,12 +26,15 @@ There is no test suite or linter. Verify changes by loading the site and walking
 ## Structure
 
 ```
-API/                          Empty in Sprint 1. Backend goes here later.
+API/                          ASP.NET Core Web API (.NET 10, controllers)
+├── Controllers/              One controller per resource (rooms, rates, reservations, holds, blocks, demo)
+├── Models/HotelModels.cs     Response shapes and request bodies
+└── Services/HotelStore.cs    In-memory data, sample data, and all booking/pricing rules
 Client/
 ├── Resources/
 │   ├── images/               Placeholder photography (must be replaced before launch)
 │   ├── styles/index.css      All styling
-│   └── scripts/index.js      All behavior, routing, and mock data
+│   └── scripts/index.js      All behavior, routing, and API calls
 └── index.html                The only HTML file
 ```
 
@@ -41,7 +45,7 @@ Client/
 - **Plain HTML, CSS, and JavaScript.** No frameworks, libraries, or build tools unless the user explicitly asks.
 - **Hash-based routing** (`#/home`, `#/search`, `#/booking`, `#/confirmation`, `#/rooms`, `#/staff/...`). Views must be linkable, back/forward must work, and unknown routes fall back to Home. The site must run without special server configuration.
 - **Each site area is a view inside `index.html`**: a `<section class="view" data-view="...">` shown/hidden by the router.
-- **Leave `API/` empty** in Sprint 1.
+- **The server owns the rules.** Pricing, availability, and booking validation live in `HotelStore`; the client may pre-validate for fast feedback but never decides prices or availability. API errors are `{ "message": "..." }` in the site's voice, shown to the user as-is.
 - **Payment form is UI only.** Validate in the browser, then discard. Never store, log, or transmit card numbers, expiry, or CVC. A reservation records only paid/not-paid status and whether the guest opted into card-on-file. Card-on-file is an optional checkbox.
 - **Scope changes go through Mr. Rogers.** Do not add significant features beyond the spec without the user confirming; flag ideas instead.
 
@@ -51,13 +55,14 @@ The file is one IIFE in `'use strict'` mode, organized into numbered sections. K
 
 1. Utilities (dates, money, escaping)
 2. Hotel configuration (room types, amenities)
-3. Mock data store and `api`
+3. `api` (fetch calls to the backend)
 4. Router
 5. Views
 6. Startup
 
-- **All data access goes through the `api` object.** Every `api` method returns a Promise so its body can later be swapped for a `fetch()` call to the backend without touching view code. Views must never read or write the mock store directly.
-- Mock data persists in `localStorage`. The Staff Portal has a "Reset sample data" link.
+- **All data access goes through the `api` object**, which wraps `fetch()` via `request()`. Views never call `fetch()` directly. JSON shapes from the API match what the views expect; keep them in sync when changing either side.
+- `ROOM_TYPES` is loaded from `GET api/rooms/types` at startup, before the router runs.
+- Server data is in memory and resets when the API restarts. The Staff Portal has a "Reset sample data" link.
 - Escape any user- or data-derived text with `esc()` before inserting it into HTML.
 - Use the existing `$` / `$$` query helpers.
 - 4-space indentation, single quotes, `const`/`let`, semicolons.

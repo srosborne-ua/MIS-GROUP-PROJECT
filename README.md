@@ -2,30 +2,28 @@
 
 An end-to-end hotel booking experience for Mr. Rogers' hotel in Tuscaloosa, Alabama. Guests can search availability, see the full cost of a stay, and book online. Staff can manage reservations, rooms, and rates.
 
-**Status:** Sprint 1. This is the core site and standard reservation flow. There is no AI functionality and no backend yet.
+**Status:** Sprint 5. The core site and standard reservation flow are built; we are now integrating the ASP.NET Core backend in `API/` with the front end. There is no AI functionality yet.
 
 ## Running the site
 
-The site is plain HTML, CSS, and JavaScript with no build step. You can either:
+The site needs two processes: the ASP.NET Core API (.NET 10 SDK) and a static server for the client.
 
-- open `Client/index.html` directly in a browser, or
-- serve the `Client` folder with any static server, for example:
+```sh
+dotnet run --project API --launch-profile http         # API on http://localhost:5269
+python3 -m http.server 8000 --directory Client          # site on http://localhost:8000
+```
 
-  ```sh
-  python3 -m http.server 8000 --directory Client
-  ```
-
-  Then visit <http://localhost:8000>.
+Then visit <http://localhost:8000>. Opening `Client/index.html` directly from disk no longer works, because the browser won't let a `file://` page call the API. If you serve the client on a different port, add that origin to `Cors:AllowedOrigins` in `API/appsettings.json`.
 
 ## Project structure
 
 ```
-API/                         Empty for Sprint 1; the backend goes here
+API/                         ASP.NET Core Web API (controllers)
 Client/
 ├── Resources/
 │   ├── images/              Placeholder photography
 │   ├── styles/index.css     All styling
-│   └── scripts/index.js     All behavior, routing, and mock data
+│   └── scripts/index.js     All behavior, routing, and API calls
 └── index.html               The only HTML file
 ```
 
@@ -50,11 +48,11 @@ Each area of the site is a `<section class="view">` inside `index.html`, and the
 | `#/staff/events` | Staff: block groups of rooms for events |
 | `#/staff/rates` | Staff: edit default rates, add special date rates, preview the next 14 nights |
 
-### Mock data and the future API
+### Data and the API
 
-All data access goes through a single `api` object in `index.js`, in section 3, "Mock data store and API". Every method returns a Promise, so each method body can later be replaced with a `fetch()` call to the backend without changing any view code.
+All data access goes through a single `api` object in `index.js` (section 3), which calls the API at `http://localhost:5269/api`. Pricing, availability, and every booking rule live on the server in `API/Services/HotelStore.cs`; the controllers in `API/Controllers` expose them. Errors come back as `{ "message": "..." }` and are shown to the user as-is.
 
-Mock data is saved to the browser's `localStorage`, so changes survive a page refresh. To reset it, use the **Reset sample data** link at the top of the Staff Portal.
+For now the server keeps data in memory, seeded with sample reservations, a hold, and an event block. **Everything resets when the API restarts.** The **Reset sample data** link in the Staff Portal also restores the sample data. A database comes next.
 
 ### Hotel model
 
