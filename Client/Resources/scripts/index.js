@@ -1,11 +1,10 @@
 /* ==========================================================================
-   Druid City Hotel — Sprint 1 single-page client
+   Druid City Hotel — single-page client
 
    Layout of this file:
      1. Utilities (dates, money, escaping)
      2. Hotel configuration (room types, amenities)
-     3. Mock data store + `api` (swap these methods for fetch() calls to /API later;
-        every method already returns a Promise, so the views will not change)
+     3. `api`: fetch() calls to the ASP.NET Core backend in /API
      4. Router (hash-based: #/home, #/search, #/booking, #/confirmation, #/rooms, #/staff)
      5. Views
      6. Startup
@@ -49,12 +48,6 @@
         const nights = [];
         for (let d = checkin; d < checkout; d = addDays(d, 1)) nights.push(d);
         return nights;
-    }
-
-    // Friday and Saturday nights are weekend nights.
-    function isWeekendNight(iso) {
-        const day = parseISO(iso).getDay();
-        return day === 5 || day === 6;
     }
 
     function money(amount) {
@@ -133,45 +126,10 @@
        2. Hotel configuration
        ====================================================================== */
 
-    const FLOORS = 3;
-    const ROOMS_PER_FLOOR = 40;
-    const SUITE_NUMBERS = [339, 340];
     const FLOOR_NAMES = { 1: 'First floor', 2: 'Second floor', 3: 'Third floor' };
 
-    const ROOM_TYPES = {
-        king: {
-            name: 'The King',
-            bed: 'king',
-            bedLabel: 'One king bed',
-            sleeps: 2,
-            size: '340 sq ft',
-            blurb: 'A generous king, a writing desk by the window, and a rain shower built for lingering.'
-        },
-        queen: {
-            name: 'The Double Queen',
-            bed: 'queen',
-            bedLabel: 'Two queen beds',
-            sleeps: 4,
-            size: '380 sq ft',
-            blurb: 'Room for the whole party: two queens, a lounge chair, and space to spread out on game weekend.'
-        },
-        twin: {
-            name: 'The Twin',
-            bed: 'twin',
-            bedLabel: 'Two twin beds',
-            sleeps: 2,
-            size: '300 sq ft',
-            blurb: 'Two crisply made twins for colleagues, siblings, or old roommates back for homecoming.'
-        },
-        suite: {
-            name: 'The Master Suite',
-            bed: 'king',
-            bedLabel: 'One king bed and a separate parlor',
-            sleeps: 4,
-            size: '850 sq ft',
-            blurb: 'Just two of them, on the top floor: a parlor for entertaining, a soaking tub, and a view over the oaks.'
-        }
-    };
+    // Loaded from the API at startup (see init). Keyed by type: king, queen, twin, suite.
+    let ROOM_TYPES = {};
 
     const AMENITIES = [
         ['Linens worth lingering in', 'High thread-count sheets, down-alternative duvets, and a pillow menu at the desk.'],
@@ -183,427 +141,156 @@
     ];
 
     /* ======================================================================
-       3. Mock data store and API
+       3. API
        ----------------------------------------------------------------------
-       Everything the views need goes through `api`. To connect the real
-       backend, replace each method body with a fetch() to the API folder's
-       service and return its JSON. Nothing below section 3 touches `db`.
+       Everything the views need goes through `api`, which calls the
+       ASP.NET Core backend in the API folder. Every method returns a
+       Promise that rejects with an Error whose message can be shown to
+       the guest or staff member as-is.
        ====================================================================== */
 
-    const STORAGE_KEY = 'druid-city-hotel:mock-db:v1';
+    const API_BASE = 'http://localhost:5269/api';
 
-    const DEFAULT_RATES = { weekday: 100, weekend: 150, suiteWeekday: 100, suiteWeekend: 150 };
-
-    function buildRooms() {
-        // 40 rooms per floor. Every third room is a king (~1/3 of the hotel);
-        // the rest alternate queen and twin. 339 and 340 are the master suites.
-        const rooms = [];
-        for (let floor = 1; floor <= FLOORS; floor++) {
-            for (let i = 1; i <= ROOMS_PER_FLOOR; i++) {
-                const number = floor * 100 + i;
-                let type;
-                if (SUITE_NUMBERS.includes(number)) type = 'suite';
-                else if (i % 3 === 0) type = 'king';
-                else if (i % 2 === 0) type = 'queen';
-                else type = 'twin';
-                rooms.push({ number, floor, type });
-            }
-        }
-        return rooms;
-    }
-
-    function nightlyRate(type, date, rates, overrides) {
-        const special = overrides.find((o) => o.date === date);
-        if (special) return { date, amount: special.amount, kind: 'special', label: special.label };
-        const weekend = isWeekendNight(date);
-        const amount = type === 'suite'
-            ? (weekend ? rates.suiteWeekend : rates.suiteWeekday)
-            : (weekend ? rates.weekend : rates.weekday);
-        return { date, amount, kind: weekend ? 'weekend' : 'weekday' };
-    }
-
-    function priceStay(type, checkin, checkout, rates, overrides) {
-        const nights = nightsBetween(checkin, checkout).map((d) => nightlyRate(type, d, rates, overrides));
-        return { nights, total: nights.reduce((sum, n) => sum + n.amount, 0) };
-    }
-
-    function seedDb() {
-        const t = todayISO();
-        const rooms = buildRooms();
-        const typeOf = (n) => rooms.find((r) => r.number === n).type;
-        const db = {
-            version: 1,
-            rates: Object.assign({}, DEFAULT_RATES),
-            rateOverrides: [],
-            rooms,
-            reservations: [],
-            holds: [],
-            blocks: [],
-            nextId: 1042,
-            nextHoldId: 1,
-            nextBlockId: 1
-        };
-
-        const seeds = [
-            // first, last, room, arrive offset, nights, guests, payment, card on file, requests, status
-            ['Eleanor', 'Whitfield', 104, -1, 3, 2, 'paid', true, 'Late arrival, around 10 PM.'],
-            ['Marcus', 'Bell', 212, 0, 3, 1, 'unpaid', false, ''],
-            ['Priya', 'Natarajan', 339, 3, 3, 2, 'paid', true, 'Celebrating our anniversary.'],
-            ['Thomas', 'Greer', 127, 1, 1, 1, 'unpaid', false, ''],
-            ['Ruth', 'Abernathy', 232, 5, 2, 3, 'paid', false, 'Quiet room away from the elevator, please.'],
-            ['Daniel', 'Okafor', 315, 7, 3, 2, 'unpaid', false, ''],
-            ['Caroline', 'Hollis', 340, 12, 2, 4, 'paid', true, ''],
-            ['Samuel', 'Price', 109, 2, 2, 1, 'paid', false, 'Need a receipt for work.'],
-            ['Grace', 'Lee', 205, 4, 2, 2, 'unpaid', false, '', 'cancelled'],
-            ['Henry', 'Castellanos', 136, -6, 2, 2, 'paid', false, '']
-        ];
-
-        seeds.forEach((s, i) => {
-            const [first, last, room, offset, nights, guests, paymentStatus, cardOnFile, requests, status] = s;
-            const checkin = addDays(t, offset);
-            const checkout = addDays(checkin, nights);
-            const type = typeOf(room);
-            const quote = priceStay(type, checkin, checkout, db.rates, db.rateOverrides);
-            const created = new Date(Date.now() - (14 - i) * 86400000).toISOString();
-            const email = first.toLowerCase() + '.' + last.toLowerCase() + '@example.com';
-            db.reservations.push({
-                id: 'DC-' + (1030 + i),
-                room, type, checkin, checkout, guests,
-                guest: { firstName: first, lastName: last, email, phone: '(205) 555-01' + pad(10 + i), requests },
-                nights: quote.nights,
-                total: quote.total,
-                paymentStatus,
-                cardOnFile,
-                source: i % 3 === 0 ? 'staff' : 'web',
-                status: status || 'confirmed',
-                createdAt: created,
-                messages: [{ at: created, from: 'system', text: 'Confirmation emailed to ' + email + '.' }]
-            });
-        });
-
-        db.holds.push({ id: 'H-' + db.nextHoldId++, room: 118, start: t, end: addDays(t, 2), reason: 'Maintenance: HVAC service', createdAt: new Date().toISOString() });
-        db.blocks.push({
-            id: 'B-' + db.nextBlockId++,
-            name: 'Abernathy–Hollis wedding party',
-            start: addDays(t, 20),
-            end: addDays(t, 21),
-            rooms: Array.from({ length: 10 }, (_, k) => 201 + k),
-            createdAt: new Date().toISOString()
-        });
-        return db;
-    }
-
-    function loadDb() {
+    async function request(path, options) {
+        options = options || {};
+        let res;
         try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (parsed && parsed.version === 1) return parsed;
-            }
-        } catch (e) { /* storage unavailable: fall back to fresh sample data */ }
-        return seedDb();
+            res = await fetch(API_BASE + path, {
+                method: options.method || 'GET',
+                headers: options.body === undefined ? {} : { 'Content-Type': 'application/json' },
+                body: options.body === undefined ? undefined : JSON.stringify(options.body)
+            });
+        } catch (e) {
+            throw new Error('We can’t reach the reservation system right now. Please try again in a moment.');
+        }
+        if (res.status === 204) return null;
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error((data && (data.message || data.title)) || 'Something went wrong. Please try again.');
+        return data;
     }
 
-    let db = loadDb();
+    const toQuery = (params) => '?' + new URLSearchParams(params).toString();
+    const seg = (value) => encodeURIComponent(value);
 
-    function saveDb() {
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); } catch (e) { /* in-memory only */ }
-    }
-
-    const ok = (value) => Promise.resolve(JSON.parse(JSON.stringify(value)));
-    const fail = (message) => Promise.reject(new Error(message));
-
-    const overlaps = (aStart, aEndExcl, bStart, bEndExcl) => aStart < bEndExcl && bStart < aEndExcl;
-
-    // Everything that occupies a room for any night in [checkin, checkout).
-    // Holds and blocks store an inclusive last night.
-    function commitmentsFor(roomNumber, checkin, checkout, ignore) {
-        ignore = ignore || {};
-        const found = [];
-        db.reservations.forEach((r) => {
-            if (r.status === 'confirmed' && r.room === roomNumber && r.id !== ignore.reservationId &&
-                overlaps(r.checkin, r.checkout, checkin, checkout)) found.push({ kind: 'reservation', item: r });
-        });
-        db.holds.forEach((h) => {
-            if (h.room === roomNumber && h.id !== ignore.holdId &&
-                overlaps(h.start, addDays(h.end, 1), checkin, checkout)) found.push({ kind: 'hold', item: h });
-        });
-        db.blocks.forEach((b) => {
-            if (b.rooms.includes(roomNumber) && b.id !== ignore.blockId &&
-                overlaps(b.start, addDays(b.end, 1), checkin, checkout)) found.push({ kind: 'block', item: b });
-        });
-        return found;
-    }
-
-    function describeCommitment(c) {
-        if (c.kind === 'reservation') return c.item.id + ' · ' + c.item.guest.firstName + ' ' + c.item.guest.lastName;
-        if (c.kind === 'hold') return 'Hold · ' + c.item.reason;
-        return 'Event · ' + c.item.name;
-    }
-
-    function findReservation(id) {
-        return db.reservations.find((r) => r.id === id);
-    }
-
-    // The backend (API/server.js) serves this site and the /api routes from one origin.
-    // When the page is opened from disk or from the static dev server on :8000, call the
-    // backend on its default local port instead.
-    const API_BASE = (location.protocol === 'file:' || location.port === '8000') ? 'http://localhost:3000' : '';
+    // Druid AI Assistant runs as its own small Node service (API/server.js), separate
+    // from the ASP.NET Core API above. It holds the Anthropic API key server-side.
+    const CONCIERGE_BASE = 'http://localhost:3000';
 
     const CONCIERGE_OFFLINE = 'Sorry, I can’t connect right now. Please try again in a moment, or call the front desk at ###-###-####.';
 
     const api = {
-        getRoomTypes() { return ok(ROOM_TYPES); },
-        getRooms() { return ok(db.rooms); },
+        getRoomTypes() { return request('/rooms/types'); },
+        getRooms() { return request('/rooms'); },
 
-        getRates() { return ok({ rates: db.rates, overrides: db.rateOverrides }); },
+        getRates() { return request('/rates'); },
 
         saveRates(input) {
-            const next = {};
-            for (const key of Object.keys(DEFAULT_RATES)) {
-                const value = Number(input[key]);
-                if (!(value > 0)) return fail('Every rate must be a positive number.');
-                next[key] = Math.round(value * 100) / 100;
-            }
-            db.rates = next;
-            saveDb();
-            return ok(db.rates);
+            return request('/rates', {
+                method: 'PUT',
+                body: {
+                    weekday: Number(input.weekday),
+                    weekend: Number(input.weekend),
+                    suiteWeekday: Number(input.suiteWeekday),
+                    suiteWeekend: Number(input.suiteWeekend)
+                }
+            });
         },
 
         addRateOverride(input) {
-            const amount = Number(input.amount);
-            if (!parseISO(input.date)) return fail('Choose a date.');
-            if (!(amount > 0)) return fail('Enter a positive rate.');
-            db.rateOverrides = db.rateOverrides.filter((o) => o.date !== input.date);
-            db.rateOverrides.push({ date: input.date, amount, label: String(input.label || '').trim() || 'Special rate' });
-            db.rateOverrides.sort((a, b) => a.date.localeCompare(b.date));
-            saveDb();
-            return ok(db.rateOverrides);
+            return request('/rates/overrides', {
+                method: 'POST',
+                body: { date: input.date, amount: Number(input.amount), label: input.label }
+            });
         },
 
-        removeRateOverride(date) {
-            db.rateOverrides = db.rateOverrides.filter((o) => o.date !== date);
-            saveDb();
-            return ok(db.rateOverrides);
-        },
+        removeRateOverride(date) { return request('/rates/overrides/' + seg(date), { method: 'DELETE' }); },
 
-        getRatePreview(start, days) {
-            const out = [];
-            for (let i = 0; i < days; i++) {
-                const date = addDays(start, i);
-                out.push({
-                    date,
-                    room: nightlyRate('king', date, db.rates, db.rateOverrides),
-                    suite: nightlyRate('suite', date, db.rates, db.rateOverrides)
-                });
-            }
-            return ok(out);
-        },
+        getRatePreview(start, days) { return request('/rates/preview' + toQuery({ start, days })); },
 
         // Available rooms for a date range, grouped by room type with the total cost.
-        searchAvailability(query) {
-            const error = checkStayDates(query.checkin, query.checkout);
-            if (error) return fail(error);
-            const guests = Number(query.guests) || 1;
-            const open = db.rooms.filter((room) => {
-                const type = ROOM_TYPES[room.type];
-                if (query.bed && query.bed !== 'any' && type.bed !== query.bed) return false;
-                if (query.floor && query.floor !== 'any' && room.floor !== Number(query.floor)) return false;
-                if (type.sleeps < guests) return false;
-                return commitmentsFor(room.number, query.checkin, query.checkout).length === 0;
-            });
-            const groups = Object.keys(ROOM_TYPES).map((type) => {
-                const rooms = open.filter((r) => r.type === type);
-                if (!rooms.length) return null;
-                return {
-                    type,
-                    rooms: rooms.map((r) => ({ number: r.number, floor: r.floor })),
-                    quote: priceStay(type, query.checkin, query.checkout, db.rates, db.rateOverrides)
-                };
-            }).filter(Boolean);
-            return ok(groups);
-        },
-
-        checkRoom(number, checkin, checkout) {
-            const room = db.rooms.find((r) => r.number === Number(number));
-            if (!room) return fail('We couldn’t find that room.');
-            const conflicts = commitmentsFor(room.number, checkin, checkout);
-            return ok({
-                room,
-                available: conflicts.length === 0,
-                quote: priceStay(room.type, checkin, checkout, db.rates, db.rateOverrides)
-            });
-        },
-
-        getReservations() { return ok(db.reservations); },
-
-        getReservation(id) {
-            const r = findReservation(id);
-            return r ? ok(r) : fail('We couldn’t find reservation ' + id + '.');
-        },
-
-        // `input` never contains card details: only whether payment was taken
-        // and whether the guest asked to keep a card on file.
-        createReservation(input) {
-            const room = db.rooms.find((r) => r.number === Number(input.room));
-            if (!room) return fail('Choose a room.');
-            const dateError = checkStayDates(input.checkin, input.checkout, input.source === 'staff');
-            if (dateError) return fail(dateError);
-            const guests = Number(input.guests) || 1;
-            if (guests > ROOM_TYPES[room.type].sleeps) return fail('That room sleeps ' + ROOM_TYPES[room.type].sleeps + '.');
-            if (commitmentsFor(room.number, input.checkin, input.checkout).length) {
-                return fail('Room ' + room.number + ' is no longer open for those dates.');
-            }
-            const quote = priceStay(room.type, input.checkin, input.checkout, db.rates, db.rateOverrides);
-            const now = new Date().toISOString();
-            const g = input.guest;
-            const reminderDate = addDays(input.checkin, -2) > todayISO() ? addDays(input.checkin, -2) : todayISO();
-            const reservation = {
-                id: 'DC-' + db.nextId++,
-                room: room.number,
-                type: room.type,
-                checkin: input.checkin,
-                checkout: input.checkout,
-                guests,
-                guest: {
-                    firstName: String(g.firstName).trim(),
-                    lastName: String(g.lastName).trim(),
-                    email: String(g.email).trim(),
-                    phone: String(g.phone).trim(),
-                    requests: String(g.requests || '').trim()
-                },
-                nights: quote.nights,
-                total: quote.total,
-                paymentStatus: input.paymentStatus === 'paid' ? 'paid' : 'unpaid',
-                cardOnFile: !!input.cardOnFile,
-                source: input.source === 'staff' ? 'staff' : 'web',
-                status: 'confirmed',
-                createdAt: now,
-                messages: [
-                    { at: now, from: 'system', text: 'Confirmation emailed to ' + String(g.email).trim() + '.' },
-                    { at: now, from: 'system', text: 'Pre-arrival note (parking, directions, check-in time) scheduled for ' + fmtDate(reminderDate) + '.' }
-                ]
-            };
-            db.reservations.push(reservation);
-            saveDb();
-            return ok(reservation);
-        },
-
-        cancelReservation(id) {
-            const r = findReservation(id);
-            if (!r) return fail('Reservation not found.');
-            r.status = 'cancelled';
-            r.messages.push({ at: new Date().toISOString(), from: 'system', text: 'Reservation cancelled. Cancellation notice emailed to guest.' });
-            saveDb();
-            return ok(r);
-        },
-
-        setPaymentStatus(id, status) {
-            const r = findReservation(id);
-            if (!r) return fail('Reservation not found.');
-            r.paymentStatus = status === 'paid' ? 'paid' : 'unpaid';
-            saveDb();
-            return ok(r);
-        },
-
-        sendGuestMessage(id, text) {
-            const r = findReservation(id);
-            if (!r) return fail('Reservation not found.');
-            if (!String(text).trim()) return fail('Write a message first.');
-            r.messages.push({ at: new Date().toISOString(), from: 'staff', text: String(text).trim() });
-            saveDb();
-            return ok(r);
-        },
-
-        // Status of every room for a single night.
-        getRoomBoard(date) {
-            const next = addDays(date, 1);
-            return ok(db.rooms.map((room) => {
-                const c = commitmentsFor(room.number, date, next);
-                const top = c.find((x) => x.kind === 'reservation') || c.find((x) => x.kind === 'block') || c.find((x) => x.kind === 'hold');
-                return Object.assign({}, room, { status: top ? top.kind : 'available', detail: top ? describeCommitment(top) : '' });
+        // `allowPast` lets staff book stays that have already started.
+        searchAvailability(q) {
+            return request('/rooms/availability' + toQuery({
+                checkin: q.checkin || '',
+                checkout: q.checkout || '',
+                guests: Number(q.guests) || 1,
+                bed: q.bed || 'any',
+                floor: q.floor || 'any',
+                allowPast: !!q.allowPast
             }));
         },
 
-        // Upcoming reservations, holds, and blocks for one room.
-        getRoomSchedule(number) {
-            const t = todayISO();
-            const n = Number(number);
-            const items = [];
-            db.reservations.forEach((r) => {
-                if (r.room === n && r.status === 'confirmed' && r.checkout > t) {
-                    items.push({ kind: 'reservation', id: r.id, start: r.checkin, end: addDays(r.checkout, -1), label: r.guest.firstName + ' ' + r.guest.lastName });
+        checkRoom(number, checkin, checkout) {
+            return request('/rooms/' + seg(number) + '/check' + toQuery({ checkin: checkin || '', checkout: checkout || '' }));
+        },
+
+        getReservations() { return request('/reservations'); },
+        getReservation(resId) { return request('/reservations/' + seg(resId)); },
+
+        // Card details are validated in the browser and discarded. The API only
+        // ever receives whether payment was taken and the card-on-file opt-in.
+        createReservation(input) {
+            const g = input.guest || {};
+            return request('/reservations', {
+                method: 'POST',
+                body: {
+                    room: Number(input.room) || null,
+                    checkin: input.checkin,
+                    checkout: input.checkout,
+                    guests: Number(input.guests) || 1,
+                    guest: {
+                        firstName: String(g.firstName || ''),
+                        lastName: String(g.lastName || ''),
+                        email: String(g.email || ''),
+                        phone: String(g.phone || ''),
+                        requests: String(g.requests || '')
+                    },
+                    paymentStatus: input.paymentStatus === 'paid' ? 'paid' : 'unpaid',
+                    cardOnFile: !!input.cardOnFile,
+                    source: input.source === 'staff' ? 'staff' : 'web'
                 }
             });
-            db.holds.forEach((h) => {
-                if (h.room === n && h.end >= t) items.push({ kind: 'hold', id: h.id, start: h.start, end: h.end, label: h.reason });
-            });
-            db.blocks.forEach((b) => {
-                if (b.rooms.includes(n) && b.end >= t) items.push({ kind: 'block', id: b.id, start: b.start, end: b.end, label: b.name });
-            });
-            items.sort((a, b) => a.start.localeCompare(b.start));
-            return ok(items);
         },
 
-        getHolds() {
-            const t = todayISO();
-            return ok(db.holds.filter((h) => h.end >= t).sort((a, b) => a.start.localeCompare(b.start)));
+        cancelReservation(resId) { return request('/reservations/' + seg(resId) + '/cancel', { method: 'POST' }); },
+
+        setPaymentStatus(resId, status) {
+            return request('/reservations/' + seg(resId) + '/payment-status', { method: 'PUT', body: { status } });
         },
+
+        sendGuestMessage(resId, text) {
+            return request('/reservations/' + seg(resId) + '/messages', { method: 'POST', body: { text: String(text) } });
+        },
+
+        // Status of every room for a single night.
+        getRoomBoard(date) { return request('/rooms/board' + toQuery({ date })); },
+
+        // Upcoming reservations, holds, and blocks for one room.
+        getRoomSchedule(number) { return request('/rooms/' + seg(number) + '/schedule'); },
+
+        getHolds() { return request('/holds'); },
 
         createHold(input) {
-            const room = Number(input.room);
-            if (!db.rooms.some((r) => r.number === room)) return fail('Choose a room.');
-            if (!parseISO(input.start) || !parseISO(input.end)) return fail('Choose the first and last night.');
-            if (input.end < input.start) return fail('The last night can’t be before the first.');
-            if (!String(input.reason || '').trim()) return fail('Add a reason so the team knows why.');
-            const conflicts = commitmentsFor(room, input.start, addDays(input.end, 1));
-            if (conflicts.length) return fail('Room ' + room + ' is already taken: ' + conflicts.map(describeCommitment).join('; ') + '.');
-            const hold = { id: 'H-' + db.nextHoldId++, room, start: input.start, end: input.end, reason: String(input.reason).trim(), createdAt: new Date().toISOString() };
-            db.holds.push(hold);
-            saveDb();
-            return ok(hold);
+            return request('/holds', {
+                method: 'POST',
+                body: { room: Number(input.room) || null, start: input.start, end: input.end, reason: input.reason }
+            });
         },
 
-        releaseHold(id) {
-            db.holds = db.holds.filter((h) => h.id !== id);
-            saveDb();
-            return ok(true);
-        },
+        releaseHold(holdId) { return request('/holds/' + seg(holdId), { method: 'DELETE' }); },
 
-        getBlocks() {
-            const t = todayISO();
-            return ok(db.blocks.filter((b) => b.end >= t).sort((a, b) => a.start.localeCompare(b.start)));
-        },
+        getBlocks() { return request('/blocks'); },
 
         createBlock(input) {
-            if (!String(input.name || '').trim()) return fail('Name the event.');
-            if (!parseISO(input.start) || !parseISO(input.end)) return fail('Choose the first and last night.');
-            if (input.end < input.start) return fail('The last night can’t be before the first.');
-            if (!input.rooms || !input.rooms.length) return fail('List at least one room.');
-            const taken = input.rooms
-                .map((n) => ({ n, c: commitmentsFor(n, input.start, addDays(input.end, 1)) }))
-                .filter((x) => x.c.length);
-            if (taken.length) {
-                return fail('These rooms are already taken on those nights: ' +
-                    taken.map((x) => x.n + ' (' + describeCommitment(x.c[0]) + ')').join(', ') + '.');
-            }
-            const block = { id: 'B-' + db.nextBlockId++, name: String(input.name).trim(), start: input.start, end: input.end, rooms: input.rooms.slice(), createdAt: new Date().toISOString() };
-            db.blocks.push(block);
-            saveDb();
-            return ok(block);
+            return request('/blocks', {
+                method: 'POST',
+                body: { name: input.name, start: input.start, end: input.end, rooms: input.rooms }
+            });
         },
 
-        removeBlock(id) {
-            db.blocks = db.blocks.filter((b) => b.id !== id);
-            saveDb();
-            return ok(true);
-        },
+        removeBlock(blockId) { return request('/blocks/' + seg(blockId), { method: 'DELETE' }); },
 
-        resetDemoData() {
-            db = seedDb();
-            saveDb();
-            return ok(true);
-        },
+        resetDemoData() { return request('/demo/reset', { method: 'POST' }); },
 
         // Druid AI Assistant (backend: POST /api/concierge). Streams the reply:
         // onText(delta) appends text, onReset() discards text shown so far.
@@ -611,7 +298,7 @@
         async askConcierge(messages, page, onText, onReset) {
             let response;
             try {
-                response = await fetch(API_BASE + '/api/concierge', {
+                response = await fetch(CONCIERGE_BASE + '/api/concierge', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ messages, page })
@@ -1563,14 +1250,19 @@
             $('#sn-quote').textContent = 'Choose valid dates to see open rooms.';
             return;
         }
-        const guests = Number(nf.guests.value);
-        const board = await api.getRooms();
-        const open = [];
-        for (const room of board) {
-            if (ROOM_TYPES[room.type].sleeps < guests) continue;
-            const check = await api.checkRoom(room.number, nf.checkin.value, nf.checkout.value);
-            if (check.available) open.push(room);
+        let groups;
+        try {
+            groups = await api.searchAvailability({
+                checkin: nf.checkin.value, checkout: nf.checkout.value, guests: nf.guests.value, allowPast: true
+            });
+        } catch (err) {
+            select.innerHTML = '';
+            $('#sn-quote').textContent = err.message;
+            return;
         }
+        const open = groups
+            .flatMap((g) => g.rooms.map((r) => ({ number: r.number, floor: r.floor, type: g.type })))
+            .sort((a, b) => a.number - b.number);
         select.innerHTML = [1, 2, 3].map((floor) => {
             const rooms = open.filter((r) => r.floor === floor);
             if (!rooms.length) return '';
@@ -1903,10 +1595,17 @@
             if (e.target.getAttribute && e.target.getAttribute('aria-invalid') === 'true') setFieldError(e.target, '');
         });
 
+        // The concierge talks to its own service, so it works even if the hotel API is down.
         initConcierge();
 
-        window.addEventListener('hashchange', router);
-        router();
+        // Room types live on the server; every view needs them, so load them before routing.
+        api.getRoomTypes().then((types) => {
+            ROOM_TYPES = types;
+            window.addEventListener('hashchange', router);
+            router();
+        }).catch((err) => {
+            showNotice($('#api-offline'), err.message);
+        });
     }
 
     init();

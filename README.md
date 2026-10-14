@@ -2,22 +2,20 @@
 
 An end-to-end hotel booking experience for Mr. Rogers' hotel in Tuscaloosa, Alabama. Guests can search availability, see the full cost of a stay, and book online. Staff can manage reservations, rooms, and rates.
 
-**Status:** Sprint 1. This is the core site and standard reservation flow. There is no AI functionality and no backend yet.
+**Status:** Sprint 5. The core site and standard reservation flow are built; we are now integrating the ASP.NET Core backend in `API/` with the front end. There is no AI functionality yet.
 
 ## Running the site
 
-The site is plain HTML, CSS, and JavaScript with no build step. You can either:
+The site needs two processes: the ASP.NET Core API (.NET 10 SDK) and a static server for the client.
 
-- open `Client/index.html` directly in a browser, or
-- serve the `Client` folder with any static server, for example:
+```sh
+dotnet run --project API --launch-profile http         # API on http://localhost:5269
+python3 -m http.server 8000 --directory Client          # site on http://localhost:8000
+```
 
-  ```sh
-  python3 -m http.server 8000 --directory Client
-  ```
+Then visit <http://localhost:8000>. Opening `Client/index.html` directly from disk no longer works, because the browser won't let a `file://` page call the API. If you serve the client on a different port, add that origin to `Cors:AllowedOrigins` in `API/appsettings.json`.
 
-  Then visit <http://localhost:8000>.
-
-### Running with the backend (needed for the AI concierge)
+### Running the AI concierge
 
 ```sh
 cd API
@@ -25,17 +23,17 @@ npm install
 npm start
 ```
 
-Then visit <http://localhost:3000>. The server reads `ANTHROPIC_API_KEY` (and optionally `CONCIERGE_MODEL` and `PORT`) from `.env` in the project root. The concierge's hotel facts live in `API/concierge/hotel-info.json`; restart the server after editing it.
+Keep the API and the static server above running, and run the concierge service in a third terminal from the `API/` folder. Keep using <http://localhost:8000>; the chat widget calls the concierge at `http://localhost:3000`. The concierge reads `ANTHROPIC_API_KEY` (and optionally `CONCIERGE_MODEL` and `PORT`) from `.env` in the project root. Its hotel facts live in `API/concierge/hotel-info.json`; restart it after editing that file. The rest of the site works without it.
 
 ## Project structure
 
 ```
-API/                         Empty for Sprint 1; the backend goes here
+API/                         ASP.NET Core Web API (controllers)
 Client/
 ├── Resources/
 │   ├── images/              Placeholder photography
 │   ├── styles/index.css     All styling
-│   └── scripts/index.js     All behavior, routing, and mock data
+│   └── scripts/index.js     All behavior, routing, and API calls
 └── index.html               The only HTML file
 ```
 
@@ -60,11 +58,11 @@ Each area of the site is a `<section class="view">` inside `index.html`, and the
 | `#/staff/events` | Staff: block groups of rooms for events |
 | `#/staff/rates` | Staff: edit default rates, add special date rates, preview the next 14 nights |
 
-### Mock data and the future API
+### Data and the API
 
-All data access goes through a single `api` object in `index.js`, in section 3, "Mock data store and API". Every method returns a Promise, so each method body can later be replaced with a `fetch()` call to the backend without changing any view code.
+All data access goes through a single `api` object in `index.js` (section 3), which calls the API at `http://localhost:5269/api`. Pricing, availability, and every booking rule live on the server in `API/Services/HotelStore.cs`; the controllers in `API/Controllers` expose them. Errors come back as `{ "message": "..." }` and are shown to the user as-is.
 
-Mock data is saved to the browser's `localStorage`, so changes survive a page refresh. To reset it, use the **Reset sample data** link at the top of the Staff Portal.
+For now the server keeps data in memory, seeded with sample reservations, a hold, and an event block. **Everything resets when the API restarts.** The **Reset sample data** link in the Staff Portal also restores the sample data. A database comes next.
 
 ### Hotel model
 
@@ -103,4 +101,4 @@ The payment form is UI only. Card fields are validated in the browser (Luhn chec
 14. **AI concierge (Druid AI Assistant):** answers hotel and booking questions only. It cannot book, check availability, or take payment; it sends guests to the booking page. It only states facts from `API/concierge/hotel-info.json`, and every TODO in that file is treated as unknown (the guest is referred to the front desk).
 15. **Concierge and online payment:** the concierge currently tells guests online payment is "coming soon" (`payment.online_payment_available: false`), even though the booking form already offers a UI-only "pay now" option. Flip the flag once real payment ships.
 16. **Concierge welcome card:** it shows on first visit and tucks into a small "Ask the concierge" button when the visitor scrolls or uses the page, so it never covers content. If a guest minimizes it, it stays minimized for the browser session.
-17. **Backend stack:** Node with the built-in `http` module and the official Anthropic SDK, chosen while building the concierge. The database engine is still to be decided.
+17. **Backend stack:** the hotel API is ASP.NET Core. The AI concierge currently runs as a separate small Node service (`API/server.js`) using the official Anthropic SDK; porting it into the ASP.NET API is a team decision. The database engine is still to be decided.
