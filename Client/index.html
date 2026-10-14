@@ -587,5 +587,51 @@
     </div>
 </footer>
 
+<!-- ============================================================
+     Druid AI Assistant (concierge widget, shown on every view)
+     ============================================================ -->
+<aside class="concierge" data-concierge aria-label="Druid AI Assistant">
+    <div class="concierge__intro" data-concierge-intro hidden>
+        <button class="concierge__intro-open" type="button" data-concierge-open>
+            <span class="concierge__intro-name">Druid AI Assistant</span>
+            <span class="concierge__intro-text">Hi, I&rsquo;m Druid AI Assistant, here to help with all of your booking needs! Ask me anything about your stay.</span>
+        </button>
+        <button class="concierge__close" type="button" data-concierge-minimize aria-label="Minimize Druid AI Assistant">&minus;</button>
+    </div>
+
+    <button class="concierge__launcher" type="button" data-concierge-launcher data-concierge-open
+            aria-controls="concierge-panel" aria-expanded="false" hidden>
+        Ask the concierge
+    </button>
+
+    <section id="concierge-panel" class="concierge__panel" aria-labelledby="concierge-title" data-concierge-panel hidden>
+        <div class="concierge__head">
+            <h2 id="concierge-title" class="concierge__title">Druid AI Assistant</h2>
+            <button class="concierge__close" type="button" data-concierge-minimize aria-label="Minimize Druid AI Assistant">&minus;</button>
+        </div>
+
+        <ol class="concierge__log" data-concierge-log aria-live="polite" aria-label="Conversation">
+            <li class="concierge__msg concierge__msg--assistant">
+                <span class="visually-hidden">Druid AI Assistant: </span>
+                <p class="concierge__text">Welcome. How can I help with your stay? I can answer questions about our rooms, rates, and policies, or walk you through booking.</p>
+            </li>
+        </ol>
+
+        <p class="concierge__typing" data-concierge-typing hidden>
+            <span class="concierge__dots" aria-hidden="true"><span></span><span></span><span></span></span>
+            <span class="visually-hidden">Druid AI Assistant is typing</span>
+        </p>
+
+        <form class="concierge__form" data-concierge-form novalidate>
+            <div class="field concierge__field">
+                <label for="concierge-input">Your message</label>
+                <textarea id="concierge-input" name="message" rows="2" maxlength="2000" autocomplete="off"></textarea>
+            </div>
+            <button class="btn concierge__send" type="submit">Send</button>
+        </form>
+        <p class="concierge__note">An AI assistant for hotel and booking questions. It can make mistakes; for anything urgent, call the front desk.</p>
+    </section>
+</aside>
+
 </body>
 </html>

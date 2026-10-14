@@ -17,6 +17,16 @@ The site is plain HTML, CSS, and JavaScript with no build step. You can either:
 
   Then visit <http://localhost:8000>.
 
+### Running with the backend (needed for the AI concierge)
+
+```sh
+cd API
+npm install
+npm start
+```
+
+Then visit <http://localhost:3000>. The server reads `ANTHROPIC_API_KEY` (and optionally `CONCIERGE_MODEL` and `PORT`) from `.env` in the project root. The concierge's hotel facts live in `API/concierge/hotel-info.json`; restart the server after editing it.
+
 ## Project structure
 
 ```
@@ -90,3 +100,7 @@ The payment form is UI only. Card fields are validated in the browser (Luhn chec
 11. **Guest communication:** confirmation emails, pre-arrival notes, and staff messages are simulated. They are logged on the reservation in the Staff Portal, but nothing is actually sent.
 12. **Placeholder content:** the amenities copy, room sizes, and street address need to be confirmed or replaced.
 13. **Photography:** both photos are stand-ins from another hotel brand and must be replaced with photos of the property before launch.
+14. **AI concierge (Druid AI Assistant):** answers hotel and booking questions only. It cannot book, check availability, or take payment; it sends guests to the booking page. It only states facts from `API/concierge/hotel-info.json`, and every TODO in that file is treated as unknown (the guest is referred to the front desk).
+15. **Concierge and online payment:** the concierge currently tells guests online payment is "coming soon" (`payment.online_payment_available: false`), even though the booking form already offers a UI-only "pay now" option. Flip the flag once real payment ships.
+16. **Concierge welcome card:** it shows on first visit and tucks into a small "Ask the concierge" button when the visitor scrolls or uses the page, so it never covers content. If a guest minimizes it, it stays minimized for the browser session.
+17. **Backend stack:** Node with the built-in `http` module and the official Anthropic SDK, chosen while building the concierge. The database engine is still to be decided.

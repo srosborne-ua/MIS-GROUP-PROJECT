@@ -345,6 +345,13 @@
         return db.reservations.find((r) => r.id === id);
     }
 
+    // The backend (API/server.js) serves this site and the /api routes from one origin.
+    // When the page is opened from disk or from the static dev server on :8000, call the
+    // backend on its default local port instead.
+    const API_BASE = (location.protocol === 'file:' || location.port === '8000') ? 'http://localhost:3000' : '';
+
+    const CONCIERGE_OFFLINE = 'Sorry, I can’t connect right now. Please try again in a moment, or call the front desk at ###-###-####.';
+
     const api = {
         getRoomTypes() { return ok(ROOM_TYPES); },
         getRooms() { return ok(db.rooms); },
@@ -596,6 +603,61 @@
             db = seedDb();
             saveDb();
             return ok(true);
+        },
+
+        // Druid AI Assistant (backend: POST /api/concierge). Streams the reply:
+        // onText(delta) appends text, onReset() discards text shown so far.
+        // Resolves when the reply is complete; rejects with a guest-friendly message.
+        async askConcierge(messages, page, onText, onReset) {
+            let response;
+            try {
+                response = await fetch(API_BASE + '/api/concierge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ messages, page })
+                });
+            } catch (e) {
+                throw new Error(CONCIERGE_OFFLINE);
+            }
+
+            if (!response.ok || !response.body) {
+                let message = CONCIERGE_OFFLINE;
+                try {
+                    const data = await response.json();
+                    if (response.status === 429 && data.error) message = data.error;
+                } catch (e) { /* keep the default message */ }
+                throw new Error(message);
+            }
+
+            // Newline-delimited JSON events: {type: 'text' | 'reset' | 'done' | 'error'}
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let done = false;
+            let serverError = '';
+            const handle = (line) => {
+                if (!line.trim()) return;
+                const event = JSON.parse(line);
+                if (event.type === 'text') onText(event.text);
+                else if (event.type === 'reset') onReset();
+                else if (event.type === 'error') serverError = event.message || CONCIERGE_OFFLINE;
+                else if (event.type === 'done') done = true;
+            };
+            try {
+                for (;;) {
+                    const chunk = await reader.read();
+                    if (chunk.done) break;
+                    buffer += decoder.decode(chunk.value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+                    lines.forEach(handle);
+                }
+                handle(buffer);
+            } catch (e) {
+                throw new Error(CONCIERGE_OFFLINE);
+            }
+            if (serverError) throw new Error(serverError);
+            if (!done) throw new Error(CONCIERGE_OFFLINE);
         }
     };
 
@@ -1646,6 +1708,175 @@
             '</table>';
     }
 
+    /* ---------- Druid AI Assistant (concierge widget) ---------- */
+
+    // Shown on every view. States: 'intro' (welcome card), 'open' (chat panel),
+    // 'min' (launcher bubble). Minimizing is remembered for the browser session.
+    const CONCIERGE_STATE_KEY = 'druid-concierge-state';
+    const CONCIERGE_WINDOW = 10;  // most recent messages sent to the server as context
+
+    // Full conversation for display; only the last CONCIERGE_WINDOW messages are sent.
+    const conciergeChat = [];
+    let conciergeBusy = false;
+
+    function conciergePage() {
+        const name = parseHash().name;
+        if (name === 'staff') return 'staff';
+        if (name === 'search' || name === 'booking' || name === 'confirmation') return 'booking';
+        return 'main';
+    }
+
+    function readConciergeState() {
+        try { return sessionStorage.getItem(CONCIERGE_STATE_KEY); } catch (e) { return null; }
+    }
+
+    function rememberMinimized() {
+        try { sessionStorage.setItem(CONCIERGE_STATE_KEY, 'min'); } catch (e) { /* not remembered */ }
+    }
+
+    function setConciergeState(state, moveFocus) {
+        const root = $('[data-concierge]');
+        root.dataset.state = state;
+        $('[data-concierge-intro]', root).hidden = state !== 'intro';
+        $('[data-concierge-panel]', root).hidden = state !== 'open';
+        const launcher = $('[data-concierge-launcher]', root);
+        launcher.hidden = state !== 'min';
+        launcher.setAttribute('aria-expanded', String(state === 'open'));
+
+        if (!moveFocus) return;
+        if (state === 'open') {
+            $('#concierge-input').focus();
+            scrollConciergeLog();
+        } else if (state === 'min') {
+            launcher.focus();
+        }
+    }
+
+    function scrollConciergeLog() {
+        const log = $('[data-concierge-log]');
+        log.scrollTop = log.scrollHeight;
+    }
+
+    function addConciergeBubble(role, text) {
+        const li = document.createElement('li');
+        li.className = 'concierge__msg concierge__msg--' + role;
+        const who = document.createElement('span');
+        who.className = 'visually-hidden';
+        who.textContent = role === 'user' ? 'You: ' : 'Druid AI Assistant: ';
+        const body = document.createElement('p');
+        body.className = 'concierge__text';
+        body.textContent = text;
+        li.append(who, body);
+        $('[data-concierge-log]').append(li);
+        scrollConciergeLog();
+        return body;
+    }
+
+    async function sendConciergeMessage(text) {
+        conciergeBusy = true;
+        const form = $('[data-concierge-form]');
+        const sendButton = $('button[type="submit"]', form);
+        const typing = $('[data-concierge-typing]');
+        sendButton.disabled = true;
+
+        conciergeChat.push({ role: 'user', content: text });
+        addConciergeBubble('user', text);
+        typing.hidden = false;
+        scrollConciergeLog();
+
+        let bubble = null;
+        let reply = '';
+        try {
+            await api.askConcierge(
+                conciergeChat.slice(-CONCIERGE_WINDOW),
+                conciergePage(),
+                (delta) => {
+                    reply += delta;
+                    if (!bubble) {
+                        typing.hidden = true;
+                        bubble = addConciergeBubble('assistant', '');
+                        bubble.parentNode.setAttribute('aria-busy', 'true');
+                    }
+                    bubble.textContent = reply;
+                    scrollConciergeLog();
+                },
+                () => {
+                    reply = '';
+                    if (bubble) bubble.textContent = '';
+                }
+            );
+            if (!reply.trim()) throw new Error(CONCIERGE_OFFLINE);
+            conciergeChat.push({ role: 'assistant', content: reply });
+        } catch (err) {
+            const message = err.message || CONCIERGE_OFFLINE;
+            if (!bubble) bubble = addConciergeBubble('assistant', '');
+            bubble.textContent = message;
+            bubble.parentNode.classList.add('concierge__msg--error');
+        } finally {
+            typing.hidden = true;
+            if (bubble) bubble.parentNode.removeAttribute('aria-busy');
+            sendButton.disabled = false;
+            conciergeBusy = false;
+            scrollConciergeLog();
+        }
+    }
+
+    function initConcierge() {
+        const root = $('[data-concierge]');
+        if (!root) return;
+
+        $$('[data-concierge-open]', root).forEach((b) => b.addEventListener('click', () => setConciergeState('open', true)));
+        $$('[data-concierge-minimize]', root).forEach((b) => b.addEventListener('click', () => {
+            rememberMinimized();
+            setConciergeState('min', true);
+        }));
+
+        root.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && root.dataset.state === 'open') {
+                rememberMinimized();
+                setConciergeState('min', true);
+            }
+        });
+
+        const form = $('[data-concierge-form]', root);
+        const input = $('#concierge-input');
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const text = input.value.trim();
+            if (!text) {
+                setFieldError(input, 'Type a question for the assistant.');
+                input.focus();
+                return;
+            }
+            if (conciergeBusy) return;
+            setFieldError(input, '');
+            input.value = '';
+            sendConciergeMessage(text);
+        });
+
+        // Enter sends; Shift+Enter adds a new line.
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+                e.preventDefault();
+                form.requestSubmit();
+            }
+        });
+
+        // The welcome card must not sit over the page while someone is using it:
+        // tuck it into the launcher once they scroll or focus anything outside the
+        // widget. This is not remembered; only an explicit minimize is.
+        const tuckIntro = (e) => {
+            if (root.dataset.state !== 'intro') return;
+            if (e.type === 'focusin' && root.contains(e.target)) return;
+            if (e.type === 'scroll' && window.scrollY < 80) return;
+            setConciergeState('min', false);
+        };
+        window.addEventListener('scroll', tuckIntro, { passive: true });
+        document.addEventListener('focusin', tuckIntro);
+
+        setConciergeState(readConciergeState() === 'min' ? 'min' : 'intro', false);
+    }
+
     /* ======================================================================
        6. Startup
        ====================================================================== */
@@ -1671,6 +1902,8 @@
         document.addEventListener('input', (e) => {
             if (e.target.getAttribute && e.target.getAttribute('aria-invalid') === 'true') setFieldError(e.target, '');
         });
+
+        initConcierge();
 
         window.addEventListener('hashchange', router);
         router();

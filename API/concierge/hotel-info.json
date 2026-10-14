@@ -1,0 +1,80 @@
+{
+    "_readme": "Hotel facts for Druid AI Assistant. This file is loaded into the concierge's system prompt on the server at startup (restart the server after editing). Any value containing TODO is treated as unknown: the concierge will NOT state it and will refer guests to the front desk instead. Replace each TODO with the confirmed fact from Mr. Rogers.",
+
+    "hotel": {
+        "name": "TODO: confirm the hotel's official name with Mr. Rogers (the website currently uses the working brand 'Druid City Hotel')",
+        "type": "Boutique hotel",
+        "city": "Tuscaloosa, Alabama",
+        "address": "TODO: street address",
+        "front_desk_phone": "###-###-#### (placeholder; TODO: real number)"
+    },
+
+    "payment": {
+        "online_payment_available": false,
+        "_note": "Flip online_payment_available to true once in-site card payment ships. While false, the concierge tells guests online payment is coming soon and the front desk can help with payment in the meantime."
+    },
+
+    "rooms": {
+        "floors": 3,
+        "rooms_per_floor": 40,
+        "total_rooms": 120,
+        "room_numbering": "Room numbers start with the floor: 101-140 on the first floor, 201-240 on the second, 301-340 on the third.",
+        "bed_mix": "About one third of rooms have a king bed. The rest are split between queen rooms and twin rooms.",
+        "master_suites": "2 large master suites on the third floor, counted within the 120 rooms.",
+        "room_types": [
+            { "name": "King", "beds": "One king bed" },
+            { "name": "Double Queen", "beds": "Two queen beds" },
+            { "name": "Twin", "beds": "Two twin beds" },
+            { "name": "Master Suite", "beds": "TODO: confirm suite bed and layout details" }
+        ],
+        "room_sizes_and_occupancy": "TODO: confirm room sizes and maximum occupancy per room type"
+    },
+
+    "rates": {
+        "weeknight_default": "$100 per night",
+        "weekend_default": "$150 per night",
+        "weekend_definition": "Friday and Saturday nights are weekend nights.",
+        "rate_notes": "These are default rates. Staff can adjust rates (including special rates for specific dates) in the employee portal, so the exact total for a stay is always shown on the booking page after choosing dates. Prices shown are before taxes.",
+        "taxes_and_fees": "TODO: lodging tax and any fees",
+        "suite_rates": "TODO: confirm whether master suites have their own rate"
+    },
+
+    "booking": {
+        "how_to_book": "Guests book on the booking page ('Book a stay' in the site menu). Choose check-in and check-out dates, then optionally filter by bed type (king, queen, twin, suite) and floor preference (first, second, or third floor). The page lists available rooms with the full cost of the stay. Pick a room and complete the reservation form.",
+        "concierge_can_book": false,
+        "concierge_can_check_availability": false
+    },
+
+    "employee_portal": {
+        "_note": "For staff questions on the employee portal. Keep in sync with the portal's tabs.",
+        "tabs": {
+            "Reservations": "Reservation list with guest details and payment status (paid / not paid); cancel reservations and log guest messages.",
+            "New reservation": "Create a reservation on behalf of a guest.",
+            "Rooms & holds": "Nightly room board; place and release holds on individual rooms.",
+            "Event blocks": "Block groups of rooms for events.",
+            "Rates": "Edit the default weeknight and weekend rates and add special rates for single dates. New rates apply to new searches only; existing reservations keep the totals they were booked at."
+        }
+    },
+
+    "policies": {
+        "check_in_time": "TODO: check-in time",
+        "check_out_time": "TODO: check-out time",
+        "cancellation_policy": "TODO: cancellation policy",
+        "pet_policy": "TODO: pet policy",
+        "parking": "TODO: parking details (self-park, valet, cost)",
+        "smoking": "TODO: smoking policy",
+        "minimum_age": "TODO: minimum check-in age"
+    },
+
+    "amenities": {
+        "_style": "Describe amenities in an upscale, polished tone.",
+        "list": [
+            "TODO: amenities list. Replace this line with confirmed amenities, for example: 'Linens worth lingering in: high thread-count sheets and a pillow menu.'"
+        ]
+    },
+
+    "location": {
+        "summary": "Tuscaloosa, Alabama.",
+        "neighborhood_and_nearby": "TODO: neighborhood description and nearby attractions (e.g., distance to campus and the stadium)"
+    }
+}

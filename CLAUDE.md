@@ -6,7 +6,13 @@ Guidance for Claude Code when working in this repository.
 
 End-to-end hotel booking platform for Mr. Rogers' hotel in Tuscaloosa, Alabama (branded **Druid City Hotel** in the client). Guests search availability, see the full cost of a stay, and book online. Staff manage reservations, availability, rates, and guest communication.
 
-The long-term project is an "AI Concierge for Hospitality Bookings", but **Sprint 1 is design and core reservation flow only: no AI functionality.**
+The long-term project is an "AI Concierge for Hospitality Bookings".
+
+**Current phase: Sprint 2: backend, database, and AI.** Sprint 1 (design and core reservation flow, client-only with mock data) is complete. This phase adds:
+
+- **A backend in `API/`** that serves the client's data over HTTP.
+- **A database** that replaces the `localStorage` mock store, with full CRUD (create, read, update, delete) for reservations, rooms, holds/blocks, rates, and guests.
+- **AI functionality** using Claude through the **official Anthropic SDK**.
 
 Success definition from the client: the site should make life easy, both for guests booking and for staff managing.
 
@@ -14,7 +20,7 @@ See [README.md](README.md) for the route table, hotel model details, and the run
 
 ## Running
 
-No build step, no dependencies. Open `Client/index.html` directly, or serve the folder:
+The client has no build step and no dependencies. Open `Client/index.html` directly, or serve the folder:
 
 ```sh
 python3 -m http.server 8000 --directory Client
@@ -22,10 +28,25 @@ python3 -m http.server 8000 --directory Client
 
 There is no test suite or linter. Verify changes by loading the site and walking through the affected views on both a narrow (phone) and wide (desktop) viewport.
 
+**Backend (serves the site and `/api/*`):** Node 20.12+, plain `http` module, one dependency (`@anthropic-ai/sdk`).
+
+```sh
+cd API && npm install && npm start     # http://localhost:3000 (PORT env var to change)
+```
+
+The AI concierge needs the backend. Opening `index.html` from disk or from the `:8000` static server still works; the client then calls the backend at `http://localhost:3000`.
+
 ## Structure
 
 ```
-API/                          Empty in Sprint 1. Backend goes here later.
+.env                          Secrets (ANTHROPIC_API_KEY). Git-ignored; never commit.
+API/                          Backend: HTTP endpoints, database access, Anthropic SDK calls.
+├── server.js                 Static file server for Client/ + POST /api/concierge
+└── concierge/
+    ├── hotel-info.json       Editable hotel facts loaded into the concierge prompt (TODOs = unknown)
+    ├── prompt.js             Server-side system prompt (identity, scope, page context)
+    ├── concierge.js          Anthropic SDK call, history window, streaming, tool loop
+    └── tools.js              Tool registry (empty for now)
 Client/
 ├── Resources/
 │   ├── images/               Placeholder photography (must be replaced before launch)
@@ -38,12 +59,40 @@ Client/
 
 - **Single-page app.** `index.html` is the only HTML file. Never create additional HTML files.
 - **No inline styles or scripts** in `index.html`. All styling goes in `index.css`; all behavior goes in `index.js`. `index.html` only links to those two files (plus Google Fonts).
-- **Plain HTML, CSS, and JavaScript.** No frameworks, libraries, or build tools unless the user explicitly asks.
+- **Client: plain HTML, CSS, and JavaScript.** No frameworks, libraries, or build tools in `Client/` unless the user explicitly asks. The backend may use a framework and the Anthropic SDK, but keep dependencies minimal.
 - **Hash-based routing** (`#/home`, `#/search`, `#/booking`, `#/confirmation`, `#/rooms`, `#/staff/...`). Views must be linkable, back/forward must work, and unknown routes fall back to Home. The site must run without special server configuration.
 - **Each site area is a view inside `index.html`**: a `<section class="view" data-view="...">` shown/hidden by the router.
-- **Leave `API/` empty** in Sprint 1.
+- **The client never talks to Anthropic or the database directly.** The browser calls our backend; only the backend uses the API key and the database.
+- **Secrets live in `.env` only.** Read `ANTHROPIC_API_KEY` from the environment. Never hard-code keys, never put them in `Client/`, never log them, and never commit `.env`.
 - **Payment form is UI only.** Validate in the browser, then discard. Never store, log, or transmit card numbers, expiry, or CVC. A reservation records only paid/not-paid status and whether the guest opted into card-on-file. Card-on-file is an optional checkbox.
 - **Scope changes go through Mr. Rogers.** Do not add significant features beyond the spec without the user confirming; flag ideas instead.
+
+## Backend, database, and AI
+
+**Backend:** Node with the built-in `http` module (chosen while building the concierge; confirm with the team). **Still to decide:** database engine.
+
+- **CRUD endpoints** cover everything the `api` object exposes today (reservations, rooms, availability, holds, event blocks, rates, guests). Keep the request and response shapes matching what the views already expect, so swapping the `api` methods to `fetch()` doesn't require view changes.
+- **Validate on the server** as well as in the browser. Never trust client input, and use parameterized queries (no SQL built by string concatenation).
+- **Business rules belong to the backend:** availability, rate calculation (weekend = Friday/Saturday nights), and "existing reservations keep their booked totals". The client may display them but the server is the source of truth.
+- **The database never stores card data.** The payment rule above applies to the database too: store only paid/not-paid status and the card-on-file opt-in.
+- **Seed data:** provide a way to load the 120-room sample hotel so the "Reset sample data" link in the Staff Portal keeps working.
+
+### AI (Anthropic SDK)
+
+- **Use the official Anthropic SDK** for the backend's language (`anthropic` for Python, `@anthropic-ai/sdk` for Node). Don't use the OpenAI-compatible endpoint or raw HTTP when an SDK exists.
+- **Default model: `claude-opus-5-5`.** Don't switch models without the team agreeing.
+- **The SDK reads `ANTHROPIC_API_KEY` from the environment.** Load `.env` at backend startup; don't pass the key around in code.
+- **AI features read and change hotel data only through the backend's own service layer** (for example, as tool calls that hit the same functions as the CRUD endpoints), never with direct database writes from model output. Anything that creates, changes, or cancels a booking needs explicit guest or staff confirmation.
+- **Handle API errors and refusals gracefully.** The site must keep working (search, booking, Staff Portal) if the AI service is unavailable.
+- **Which AI features to build** (guest concierge chat, staff assistant, etc.) goes through Mr. Rogers like any other scope change. Flag ideas; don't build unconfirmed features.
+- **Concierge model:** set with the `CONCIERGE_MODEL` env var (default `claude-opus-5-5`). The system prompt lives only on the server; the client sends just the chat messages and which site section it is on.
+
+### AI Concierge — planned features
+
+- Current state: Druid AI Assistant answers hotel and booking questions only, is aware of which site section the user is on (main / booking / employee portal), and is restricted to booking-related topics.
+- Planned: booking rooms directly through the concierge and checking room availability through it, via Anthropic tool use calling the site's existing booking and availability logic.
+- Planned: in-site payment (credit card entry during booking). When it ships, update the payment flag in the hotel info file so the concierge tells guests they can pay online.
+- Until then, the concierge redirects booking and availability requests to the booking page. Keep the concierge server code structured so tools can be added without a rewrite.
 
 ## Code conventions (`index.js`)
 
@@ -56,8 +105,9 @@ The file is one IIFE in `'use strict'` mode, organized into numbered sections. K
 5. Views
 6. Startup
 
-- **All data access goes through the `api` object.** Every `api` method returns a Promise so its body can later be swapped for a `fetch()` call to the backend without touching view code. Views must never read or write the mock store directly.
-- Mock data persists in `localStorage`. The Staff Portal has a "Reset sample data" link.
+- **All data access goes through the `api` object.** Every `api` method returns a Promise. In this phase, method bodies move from the `localStorage` mock store to `fetch()` calls to the backend, without touching view code. Views must never call `fetch()` or read storage directly.
+- Until a method is migrated, it keeps using the `localStorage` mock store. The Staff Portal has a "Reset sample data" link.
+- Show loading and error states in views now that calls go over the network.
 - Escape any user- or data-derived text with `esc()` before inserting it into HTML.
 - Use the existing `$` / `$$` query helpers.
 - 4-space indentation, single quotes, `const`/`let`, semicolons.
@@ -81,7 +131,7 @@ Every item must remain covered:
 - Block off rooms for events
 - View and edit cost data and default rates
 
-The portal currently has no sign-in (see README assumptions).
+The portal currently has no sign-in (see README assumptions). With a real backend and database, staff endpoints are exposed over the network, so staff authentication should be raised with Mr. Rogers before launch.
 
 ## Design
 

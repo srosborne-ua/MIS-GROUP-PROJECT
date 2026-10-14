@@ -1,0 +1,15 @@
+{
+  "name": "druid-city-hotel-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend for the Druid City Hotel booking site: static client + AI concierge endpoint.",
+  "type": "commonjs",
+  "main": "server.js",
+  "engines": { "node": ">=20.12" },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.134.0"
+  }
+}
