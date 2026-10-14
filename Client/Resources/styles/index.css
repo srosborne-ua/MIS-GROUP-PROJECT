@@ -1149,7 +1149,6 @@ input[type="checkbox"] {
 
 @media (min-width: 48rem) {
     .site-footer__inner { grid-template-columns: 1fr auto; align-items: start; }
-    .site-footer__note { grid-column: 1 / -1; }
 }
 
 /* Druid AI Assistant ------------------------------------------------------ */
