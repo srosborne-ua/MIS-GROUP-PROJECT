@@ -15,15 +15,9 @@ python3 -m http.server 8000 --directory Client          # site on http://localho
 
 Then visit <http://localhost:8000>. Opening `Client/index.html` directly from disk no longer works, because the browser won't let a `file://` page call the API. If you serve the client on a different port, add that origin to `Cors:AllowedOrigins` in `API/appsettings.json`.
 
-### Running the AI concierge
+### The AI concierge
 
-```sh
-cd API
-npm install
-npm start
-```
-
-Keep the API and the static server above running, and run the concierge service in a third terminal from the `API/` folder. Keep using <http://localhost:8000>; the chat widget calls the concierge at `http://localhost:3000`. The concierge reads `ANTHROPIC_API_KEY` (and optionally `CONCIERGE_MODEL` and `PORT`) from `.env` in the project root. Its hotel facts live in `API/concierge/hotel-info.json`; restart it after editing that file. The rest of the site works without it.
+The Druid AI Assistant chat is part of the API (`POST api/concierge`), so the two commands above run it too. It reads `ANTHROPIC_API_KEY` (and optionally `CONCIERGE_MODEL`) from `.env` in the project root. Its hotel facts live in `API/Concierge/hotel-info.json`; restart the API after editing that file. The rest of the site works without the key.
 
 ## Project structure
 
@@ -98,7 +92,7 @@ The payment form is UI only. Card fields are validated in the browser (Luhn chec
 11. **Guest communication:** confirmation emails, pre-arrival notes, and staff messages are simulated. They are logged on the reservation in the Staff Portal, but nothing is actually sent.
 12. **Placeholder content:** the amenities copy, room sizes, and street address need to be confirmed or replaced.
 13. **Photography:** both photos are stand-ins from another hotel brand and must be replaced with photos of the property before launch.
-14. **AI concierge (Druid AI Assistant):** answers hotel and booking questions only. It cannot book, check availability, or take payment; it sends guests to the booking page. It only states facts from `API/concierge/hotel-info.json`, and every TODO in that file is treated as unknown (the guest is referred to the front desk).
+14. **AI concierge (Druid AI Assistant):** answers hotel and booking questions only. It cannot book, check availability, or take payment; it sends guests to the booking page. It only states facts from `API/Concierge/hotel-info.json`, and every TODO in that file is treated as unknown (the guest is referred to the front desk).
 15. **Concierge and online payment:** the concierge currently tells guests online payment is "coming soon" (`payment.online_payment_available: false`), even though the booking form already offers a UI-only "pay now" option. Flip the flag once real payment ships.
 16. **Concierge welcome card:** it shows on first visit and tucks into a small "Ask the concierge" button when the visitor scrolls or uses the page, so it never covers content. If a guest minimizes it, it stays minimized for the browser session.
-17. **Backend stack:** the hotel API is ASP.NET Core. The AI concierge currently runs as a separate small Node service (`API/server.js`) using the official Anthropic SDK; porting it into the ASP.NET API is a team decision. The database engine is still to be decided.
+17. **Backend stack:** the backend is C# only: an ASP.NET Core Web API, which also hosts the AI concierge using the official Anthropic C# SDK. The database engine is still to be decided.

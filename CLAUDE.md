@@ -29,14 +29,7 @@ python3 -m http.server 8000 --directory Client          # http://localhost:8000
 
 There is no test suite or linter. Verify changes by loading the site and walking through the affected views on both a narrow (phone) and wide (desktop) viewport.
 
-**AI concierge service:** Node 20.12+, plain `http` module, one dependency (`@anthropic-ai/sdk`). Run it alongside the two commands above (from the `API/` folder):
-
-```sh
-npm install
-npm start
-```
-
-The rest of the site works without it; only the chat widget needs it.
+The AI concierge is part of the API (`POST api/concierge`), so those two commands run everything. It needs `ANTHROPIC_API_KEY` in the repo-root `.env`; without it the chat shows a friendly error and the rest of the site keeps working.
 
 ## Structure
 
@@ -46,12 +39,13 @@ API/                          ASP.NET Core Web API (.NET 10, controllers)
 ├── Controllers/              One controller per resource (rooms, rates, reservations, holds, blocks, demo)
 ├── Models/HotelModels.cs     Response shapes and request bodies
 ├── Services/HotelStore.cs    In-memory data, sample data, and all booking/pricing rules
-├── server.js                 Node concierge service: POST /api/concierge (port 3000)
-└── concierge/
+├── Services/DotEnv.cs        Loads the repo-root .env at startup
+├── Controllers/ConciergeController.cs   POST api/concierge (streams NDJSON, rate limited)
+└── Concierge/
     ├── hotel-info.json       Editable hotel facts loaded into the concierge prompt (TODOs = unknown)
-    ├── prompt.js             Server-side system prompt (identity, scope, page context)
-    ├── concierge.js          Anthropic SDK call, history window, streaming, tool loop
-    └── tools.js              Tool registry (empty for now)
+    ├── ConciergePrompt.cs    Server-side system prompt (identity, scope, page context)
+    ├── ConciergeService.cs   Anthropic SDK call, history window, streaming, tool loop
+    └── ConciergeTools.cs     Tool registry (empty for now)
 Client/
 ├── Resources/
 │   ├── images/               Placeholder photography (must be replaced before launch)
@@ -64,6 +58,7 @@ Client/
 
 - **Single-page app.** `index.html` is the only HTML file. Never create additional HTML files.
 - **No inline styles or scripts** in `index.html`. All styling goes in `index.css`; all behavior goes in `index.js`. `index.html` only links to those two files (plus Google Fonts).
+- **Backend: C# only.** All server code is C# in the ASP.NET Core project in `API/`. Don't add Node, Python, or other backend services or runtimes; new endpoints, AI features, and data access go into this project.
 - **Client: plain HTML, CSS, and JavaScript.** No frameworks, libraries, or build tools in `Client/` unless the user explicitly asks. The backend may use a framework and the Anthropic SDK, but keep dependencies minimal.
 - **Hash-based routing** (`#/home`, `#/search`, `#/booking`, `#/confirmation`, `#/rooms`, `#/staff/...`). Views must be linkable, back/forward must work, and unknown routes fall back to Home. The site must run without special server configuration.
 - **Each site area is a view inside `index.html`**: a `<section class="view" data-view="...">` shown/hidden by the router.
@@ -75,7 +70,7 @@ Client/
 
 ## Backend, database, and AI
 
-**Backend:** ASP.NET Core Web API (`API/`, .NET 10). The AI concierge currently runs as a separate small Node service in the same folder (`API/server.js`, port 3000); whether to port it into the ASP.NET API (the official Anthropic C# SDK exists) is a team decision. **Still to decide:** database engine.
+**Backend:** C# / ASP.NET Core Web API (`API/`, .NET 10), including the AI concierge. **Still to decide:** database engine.
 
 - **CRUD endpoints** cover everything the `api` object exposes today (reservations, rooms, availability, holds, event blocks, rates, guests). Keep the request and response shapes matching what the views already expect, so swapping the `api` methods to `fetch()` doesn't require view changes.
 - **Validate on the server** as well as in the browser. Never trust client input, and use parameterized queries (no SQL built by string concatenation).
@@ -85,9 +80,9 @@ Client/
 
 ### AI (Anthropic SDK)
 
-- **Use the official Anthropic SDK** for the backend's language (`anthropic` for Python, `@anthropic-ai/sdk` for Node). Don't use the OpenAI-compatible endpoint or raw HTTP when an SDK exists.
+- **Use the official Anthropic C# SDK** (NuGet package `Anthropic`). Don't use the OpenAI-compatible endpoint or raw HTTP.
 - **Default model: `claude-opus-5-5`.** Don't switch models without the team agreeing.
-- **The SDK reads `ANTHROPIC_API_KEY` from the environment.** Load `.env` at backend startup; don't pass the key around in code.
+- **The SDK reads `ANTHROPIC_API_KEY` from the environment.** `DotEnv.Load()` in `Program.cs` loads the repo-root `.env` at startup; don't pass the key around in code.
 - **AI features read and change hotel data only through the backend's own service layer** (for example, as tool calls that hit the same functions as the CRUD endpoints), never with direct database writes from model output. Anything that creates, changes, or cancels a booking needs explicit guest or staff confirmation.
 - **Handle API errors and refusals gracefully.** The site must keep working (search, booking, Staff Portal) if the AI service is unavailable.
 - **Which AI features to build** (guest concierge chat, staff assistant, etc.) goes through Mr. Rogers like any other scope change. Flag ideas; don't build unconfirmed features.
@@ -98,7 +93,7 @@ Client/
 - Current state: Druid AI Assistant answers hotel and booking questions only, is aware of which site section the user is on (main / booking / employee portal), and is restricted to booking-related topics.
 - Planned: booking rooms directly through the concierge and checking room availability through it, via Anthropic tool use calling the site's existing booking and availability logic.
 - Planned: in-site payment (credit card entry during booking). When it ships, update the payment flag in the hotel info file so the concierge tells guests they can pay online.
-- Until then, the concierge redirects booking and availability requests to the booking page. Keep the concierge server code structured so tools can be added without a rewrite.
+- Until then, the concierge redirects booking and availability requests to the booking page. Keep the concierge server code (`ConciergeService` / `ConciergeTools`) structured so tools can be added without a rewrite.
 
 ## Code conventions (`index.js`)
 
@@ -114,7 +109,7 @@ The file is one IIFE in `'use strict'` mode, organized into numbered sections. K
 - **All data access goes through the `api` object**, which wraps `fetch()` via `request()`. Views never call `fetch()` directly. JSON shapes from the API match what the views expect; keep them in sync when changing either side.
 - `ROOM_TYPES` is loaded from `GET api/rooms/types` at startup, before the router runs.
 - Server data is in memory and resets when the API restarts. The Staff Portal has a "Reset sample data" link.
-- `api.askConcierge()` calls the Node concierge service at `CONCIERGE_BASE` (separate from the ASP.NET `API_BASE`). The concierge widget is initialized before the room-types load, so it works even if the hotel API is down.
+- `api.askConcierge()` calls `POST api/concierge` and reads the streamed NDJSON reply. The concierge widget is initialized before the room-types load, so the widget still appears (with a friendly error) if the API is down.
 - Show loading and error states in views, since calls go over the network.
 - Escape any user- or data-derived text with `esc()` before inserting it into HTML.
 - Use the existing `$` / `$$` query helpers.

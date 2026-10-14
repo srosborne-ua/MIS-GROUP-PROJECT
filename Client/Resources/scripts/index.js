@@ -172,10 +172,6 @@
     const toQuery = (params) => '?' + new URLSearchParams(params).toString();
     const seg = (value) => encodeURIComponent(value);
 
-    // Druid AI Assistant runs as its own small Node service (API/server.js), separate
-    // from the ASP.NET Core API above. It holds the Anthropic API key server-side.
-    const CONCIERGE_BASE = 'http://localhost:3000';
-
     const CONCIERGE_OFFLINE = 'Sorry, I can’t connect right now. Please try again in a moment, or call the front desk at ###-###-####.';
 
     const api = {
@@ -292,13 +288,13 @@
 
         resetDemoData() { return request('/demo/reset', { method: 'POST' }); },
 
-        // Druid AI Assistant (backend: POST /api/concierge). Streams the reply:
+        // Druid AI Assistant (POST api/concierge). Streams the reply:
         // onText(delta) appends text, onReset() discards text shown so far.
         // Resolves when the reply is complete; rejects with a guest-friendly message.
         async askConcierge(messages, page, onText, onReset) {
             let response;
             try {
-                response = await fetch(CONCIERGE_BASE + '/api/concierge', {
+                response = await fetch(API_BASE + '/concierge', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ messages, page })
@@ -311,7 +307,7 @@
                 let message = CONCIERGE_OFFLINE;
                 try {
                     const data = await response.json();
-                    if (response.status === 429 && data.error) message = data.error;
+                    if (response.status === 429 && data.message) message = data.message;
                 } catch (e) { /* keep the default message */ }
                 throw new Error(message);
             }
@@ -1595,7 +1591,7 @@
             if (e.target.getAttribute && e.target.getAttribute('aria-invalid') === 'true') setFieldError(e.target, '');
         });
 
-        // The concierge talks to its own service, so it works even if the hotel API is down.
+        // Set up the concierge before room types load, so it still appears if that call fails.
         initConcierge();
 
         // Room types live on the server; every view needs them, so load them before routing.
