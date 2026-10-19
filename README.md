@@ -16,18 +16,32 @@ The client's measure of success: the site should make life easy, both for guests
 
 ## Running the site
 
-The site needs two processes: the API (.NET 10 SDK) and a static server for the client.
+The API (.NET 10 SDK) serves both the site and its data, so one command runs everything:
 
 ```sh
-dotnet run --project API --launch-profile http          # API on http://localhost:5269
-python3 -m http.server 8000 --directory Client          # site on http://localhost:8000
+dotnet run --project API --launch-profile http          # site and API on http://localhost:5269
 ```
 
-Then visit <http://localhost:8000>. Opening `Client/index.html` directly from disk won't work, because the browser won't let a `file://` page call the API. If you serve the client on a different port, add that origin to `Cors:AllowedOrigins` in `API/appsettings.json`.
+Then visit <http://localhost:5269>. Locally the API serves the `Client/` folder directly, so edits to the HTML, CSS, or JS show up on refresh. Opening `Client/index.html` directly from disk won't work, because the page calls the API at `/api` on the same address.
 
 The AI concierge needs `ANTHROPIC_API_KEY` in a `.env` file at the project root (git-ignored; never commit it). Without the key, the chat shows a friendly error and the rest of the site works normally.
 
 There is no automated test suite. Check changes by walking through the affected views at both phone and desktop widths.
+
+## Deploying to Azure
+
+The site runs on Azure App Service as a single app: `dotnet publish` copies `Client/` into the API's `wwwroot`, and the API serves it. [.github/workflows/deploy-azure.yml](.github/workflows/deploy-azure.yml) publishes and deploys on every push to `main`.
+
+One-time setup:
+
+1. **Create the Web App** in the Azure portal: Publish **Code**, Runtime **.NET 10**, OS **Linux**, region **Central US** (closest to Tuscaloosa). Pricing plan **Free F1** for testing or **Basic B1** to stay always on.
+2. **Turn on HTTPS Only** (Settings > Configuration).
+3. **Add `ANTHROPIC_API_KEY`** under Settings > Environment variables (optionally `CONCIERGE_MODEL`). This replaces `.env`, which is never deployed.
+4. **Allow publish-profile deployments:** Settings > Configuration > turn on "SCM Basic Auth Publishing Credentials". Then download the publish profile from the app's Overview page.
+5. **In GitHub** (Settings > Secrets and variables > Actions): add the secret `AZURE_WEBAPP_PUBLISH_PROFILE` (paste the whole publish profile file) and the variable `AZURE_WEBAPP_NAME` (the Web App's name).
+6. **Deploy:** push to `main`, or run the workflow from the Actions tab.
+
+Keep the app at **one instance**: the in-memory data and the concierge rate limit live in the app's memory. On Free F1 the app shuts down when idle, which resets the sample data.
 
 ## Project structure
 
@@ -91,7 +105,7 @@ The **Reset sample data** link restores the 120-room sample hotel with its sampl
 The browser talks only to our API; it never calls Anthropic or a database directly.
 
 - **The server owns the rules.** Pricing, availability, and booking validation live in `API/Services/HotelStore.cs`. The client checks forms for fast feedback but never decides prices or availability.
-- **One `api` object on the client.** All data access in `index.js` goes through it (section 3), calling `http://localhost:5269/api`.
+- **One `api` object on the client.** All data access in `index.js` goes through it (section 3), calling `/api` on the same address that served the page.
 - **Errors** come back as `{ "message": "..." }` in the site's voice and are shown to the user as-is.
 - **Storage:** data is in memory for now and **resets when the API restarts**. The database will replace it with the same request and response shapes, so the views won't need to change.
 
@@ -155,3 +169,5 @@ The Druid AI Assistant is a chat widget on every page, served by `POST api/conci
 15. **AI concierge scope:** answers hotel and booking questions only. It cannot book, check availability, or take payment; it sends guests to the booking page. It only states facts from `hotel-info.json`.
 16. **Concierge and online payment:** the concierge tells guests online payment is "coming soon" (`payment.online_payment_available: false`), even though the booking form already offers a UI-only "pay now" option. Flip the flag once real payment ships.
 17. **Concierge welcome card:** it shows on first visit and tucks into a small "Ask the concierge" button when the visitor scrolls or uses the page, so it never covers content. If a guest minimizes it, it stays minimized for the browser session.
+18. **Hosting:** the site is hosted on Azure App Service (Linux, Central US) as one app that serves both the site and the API. Mr. Rogers to confirm the hosting cost and whether he wants a custom domain instead of the `azurewebsites.net` address.
+19. **Public demo data:** while the site is public without staff sign-in, it holds sample data only, and anyone can open the Staff Portal and use "Reset sample data". Real guest data must wait for staff authentication.

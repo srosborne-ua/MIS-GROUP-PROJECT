@@ -14,6 +14,8 @@
   <ItemGroup>
     <!-- Hotel facts for the AI concierge; editable without recompiling (restart the API to reload). -->
     <Content Update="Concierge/hotel-info.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- The site itself: published into wwwroot so the deployed API serves it. -->
+    <None Include="../Client/**" Exclude="../Client/**/.DS_Store" LinkBase="wwwroot" CopyToOutputDirectory="Never" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

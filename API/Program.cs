@@ -6,7 +6,14 @@ using API.Services;
 // Secrets (ANTHROPIC_API_KEY) come from the repo-root .env; load them before anything reads the environment.
 DotEnv.Load();
 
-var builder = WebApplication.CreateBuilder(args);
+// The API also serves the site. Locally it serves the repo's Client/ folder directly, so
+// edits show on refresh; a published build carries a copy of Client/ in wwwroot instead.
+var localClient = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", "Client"));
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    WebRootPath = Directory.Exists(localClient) ? localClient : null
+});
 
 // Add services to the container.
 
@@ -42,16 +49,6 @@ builder.Services.AddRateLimiter(options =>
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
-// Allow the static client (served separately) to call this API.
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
-builder.Services.AddCors(options =>
-{
-    options.AddDefaultPolicy(policy =>
-        policy.WithOrigins(allowedOrigins)
-            .AllowAnyHeader()
-            .AllowAnyMethod());
-});
-
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -62,7 +59,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-app.UseCors();
+// Serve index.html at / plus its styles, scripts, and images.
+app.UseDefaultFiles();
+app.UseStaticFiles();
 
 app.UseRateLimiter();
 

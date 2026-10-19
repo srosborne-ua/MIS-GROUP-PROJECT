@@ -20,22 +20,24 @@ See [README.md](README.md) for the route table, hotel model details, and the run
 
 ## Running
 
-Run the API and serve the client (opening `index.html` from disk can't call the API):
+The API serves the client too (locally straight from `Client/`; published builds copy it into `wwwroot`), so one command runs everything. Opening `index.html` from disk can't call the API.
 
 ```sh
-dotnet run --project API --launch-profile http          # http://localhost:5269
-python3 -m http.server 8000 --directory Client          # http://localhost:8000
+dotnet run --project API --launch-profile http          # site and API on http://localhost:5269
 ```
+
+**Deployment:** Azure App Service (Linux, single instance) via [.github/workflows/deploy-azure.yml](.github/workflows/deploy-azure.yml) on every push to `main`. On Azure, `ANTHROPIC_API_KEY` is an App Service environment variable. Setup steps are in the README.
 
 There is no test suite or linter. Verify changes by loading the site and walking through the affected views on both a narrow (phone) and wide (desktop) viewport.
 
-The AI concierge is part of the API (`POST api/concierge`), so those two commands run everything. It needs `ANTHROPIC_API_KEY` in the repo-root `.env`; without it the chat shows a friendly error and the rest of the site keeps working.
+The AI concierge is part of the API (`POST api/concierge`). It needs `ANTHROPIC_API_KEY` in the repo-root `.env`; without it the chat shows a friendly error and the rest of the site keeps working.
 
 ## Structure
 
 ```
 .env                          Secrets (ANTHROPIC_API_KEY). Git-ignored; never commit.
-API/                          ASP.NET Core Web API (.NET 10, controllers)
+.github/workflows/deploy-azure.yml   Publish and deploy to Azure App Service on push to main
+API/                          ASP.NET Core Web API (.NET 10, controllers); also serves Client/
 ├── Controllers/              One controller per resource (rooms, rates, reservations, holds, blocks, demo)
 ├── Models/HotelModels.cs     Response shapes and request bodies
 ├── Services/HotelStore.cs    In-memory data, sample data, and all booking/pricing rules
@@ -106,7 +108,7 @@ The file is one IIFE in `'use strict'` mode, organized into numbered sections. K
 5. Views
 6. Startup
 
-- **All data access goes through the `api` object**, which wraps `fetch()` via `request()`. Views never call `fetch()` directly. JSON shapes from the API match what the views expect; keep them in sync when changing either side.
+- **All data access goes through the `api` object**, which wraps `fetch()` via `request()` against the same-origin `/api`. Views never call `fetch()` directly. JSON shapes from the API match what the views expect; keep them in sync when changing either side.
 - `ROOM_TYPES` is loaded from `GET api/rooms/types` at startup, before the router runs.
 - Server data is in memory and resets when the API restarts. The Staff Portal has a "Reset sample data" link.
 - `api.askConcierge()` calls `POST api/concierge` and reads the streamed NDJSON reply. The concierge widget is initialized before the room-types load, so the widget still appears (with a friendly error) if the API is down.

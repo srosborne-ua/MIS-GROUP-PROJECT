@@ -149,7 +149,8 @@
        the guest or staff member as-is.
        ====================================================================== */
 
-    const API_BASE = 'http://localhost:5269/api';
+    // The API serves this page, so API calls go to the same address the site is on.
+    const API_BASE = '/api';
 
     async function request(path, options) {
         options = options || {};
