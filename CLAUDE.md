@@ -16,7 +16,7 @@ The long-term project is an "AI Concierge for Hospitality Bookings".
 
 **Live:** the Azure site runs on the MySQL database (Zach's PR #2 plus fixes, merged in PR #3).
 
-**In progress, not merged:** RAG for the concierge on the `concierge-rag` branch (knowledge documents searched with model-written, validated read-only SQL). It needs team and Mr. Rogers' approval before it goes to `main` (README assumption 25).
+**Also live:** RAG for the concierge (knowledge documents searched with model-written, validated read-only SQL as `druid_llm_ro`). Shipped ahead of Mr. Rogers' sign-off; he still needs to confirm it (README assumption 25).
 
 Success definition from the client: the site should make life easy, both for guests booking and for staff managing.
 

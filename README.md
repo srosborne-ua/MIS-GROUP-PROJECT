@@ -158,7 +158,7 @@ The Druid AI Assistant is a chat widget on every page, served by `POST api/conci
 - The system prompt stays on the server. The browser sends only the chat messages and the current site section.
 - It cannot book or check availability yet; it sends guests to the booking page. Booking and availability through the chat are planned, using tool calls into the same backend rules as the rest of the site, with explicit guest confirmation.
 
-### Knowledge base (RAG) — pending approval
+### Knowledge base (RAG)
 
 When `DB_LLM_RO_CONNECTION` is set, the concierge looks hotel facts up in the database instead of having them pasted into its prompt: guest question → `get_knowledge_schema` (the view's columns) → `search_knowledge` (one SELECT Claude writes, filtering with `LIKE` on keywords) → matching documents → an answer from those documents only, naming the document title(s) it used. If nothing relevant comes back, it says it doesn't know and points to the front desk or the booking page.
 
@@ -239,7 +239,7 @@ The validator is also checked directly against 33 queries (DROP/INSERT/UPDATE, `
 23. **Database location:** the live database is in Belgium Central (the only free option for Azure for Students), while the site is in North Central US, which adds some delay to each page load. Mr. Rogers to confirm whether that's acceptable or whether to pay for a US-region database.
 24. **"Today" is Tuscaloosa time:** past-arrival checks and the staff lists use the hotel's local date (Central Time), not the server's UTC clock.
 
-**AI concierge knowledge base (built on the `concierge-rag` branch, not merged; needs approval)**
+**AI concierge knowledge base (live on the site; Mr. Rogers to confirm)**
 
-25. **Concierge looks facts up in the database (RAG):** the concierge writes its own read-only SQL against one view of hotel documents, under the safety layers in [Knowledge base (RAG)](#knowledge-base-rag--pending-approval). CLAUDE.md requires team and Mr. Rogers' approval for a feature where the model writes SQL. Mr. Rogers to confirm he wants this, and to supply the TODO facts (cancellation, pets, parking, amenities, smoking, minimum age, taxes, suite rates, neighborhood).
+25. **Concierge looks facts up in the database (RAG):** the concierge writes its own read-only SQL against one view of hotel documents, under the safety layers in [Knowledge base (RAG)](#knowledge-base-rag). CLAUDE.md requires team and Mr. Rogers' approval for a feature where the model writes SQL. Mr. Rogers to confirm he wants this, and to supply the TODO facts (cancellation, pets, parking, amenities, smoking, minimum age, taxes, suite rates, neighborhood).
 26. **Slower concierge answers:** a fact lookup takes two extra model turns (schema, then search) plus database round trips to Belgium Central, so answers take several seconds longer than before.
