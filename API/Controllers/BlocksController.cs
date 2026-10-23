@@ -11,17 +11,17 @@ public class BlocksController(HotelStore store) : ControllerBase
 {
     // GET api/blocks
     [HttpGet]
-    public List<Block> GetBlocks() => store.GetBlocks();
+    public Task<List<Block>> GetBlocks() => store.GetBlocksAsync();
 
     // POST api/blocks
     [HttpPost]
-    public Block CreateBlock(CreateBlockRequest input) => store.CreateBlock(input);
+    public Task<Block> CreateBlock(CreateBlockRequest input) => store.CreateBlockAsync(input);
 
     // DELETE api/blocks/B-1
     [HttpDelete("{id}")]
-    public IActionResult RemoveBlock(string id)
+    public async Task<IActionResult> RemoveBlock(string id)
     {
-        store.RemoveBlock(id);
+        await store.RemoveBlockAsync(id);
         return NoContent();
     }
 }

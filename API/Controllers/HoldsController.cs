@@ -11,17 +11,17 @@ public class HoldsController(HotelStore store) : ControllerBase
 {
     // GET api/holds
     [HttpGet]
-    public List<Hold> GetHolds() => store.GetHolds();
+    public Task<List<Hold>> GetHolds() => store.GetHoldsAsync();
 
     // POST api/holds
     [HttpPost]
-    public Hold CreateHold(CreateHoldRequest input) => store.CreateHold(input);
+    public Task<Hold> CreateHold(CreateHoldRequest input) => store.CreateHoldAsync(input);
 
     // DELETE api/holds/H-1
     [HttpDelete("{id}")]
-    public IActionResult ReleaseHold(string id)
+    public async Task<IActionResult> ReleaseHold(string id)
     {
-        store.ReleaseHold(id);
+        await store.ReleaseHoldAsync(id);
         return NoContent();
     }
 }

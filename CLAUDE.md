@@ -10,9 +10,11 @@ The long-term project is an "AI Concierge for Hospitality Bookings".
 
 **Current phase: Sprint 5: integrating the ASP.NET Core backend (`API/`) with the existing front end, and adding AI.** This phase adds:
 
-- **An ASP.NET Core Web API in `API/`** that serves the client's data over HTTP (in-memory for now).
-- **A database** that replaces the in-memory store, with full CRUD (create, read, update, delete) for reservations, rooms, holds/blocks, rates, and guests.
+- **An ASP.NET Core Web API in `API/`** that serves the client's data over HTTP.
+- **A MySQL database** behind the API, with full CRUD (create, read, update, delete) for reservations, rooms, holds/blocks, rates, and guests.
 - **AI functionality** using Claude through the **official Anthropic SDK**, starting with the Druid AI Assistant concierge chat.
+
+**Current goal: run the live Azure site on the MySQL database.** The database is already live on Azure (schema, rooms, and sample data loaded); the `database-integration` branch brings in the database code from Zach's PR #2 plus fixes. Merging it to `main` deploys it.
 
 Success definition from the client: the site should make life easy, both for guests booking and for staff managing.
 
@@ -30,19 +32,28 @@ dotnet run --project API --launch-profile http          # site and API on http:/
 
 There is no test suite or linter. Verify changes by loading the site and walking through the affected views on both a narrow (phone) and wide (desktop) viewport.
 
+The API needs MySQL: `DB_APP_CONNECTION` (the `druid_app` user on the `mis321` schema) in the repo-root `.env`. Locally that can point at your own MySQL or at the shared Azure database. One-time setup (run `API/Database/schema.sql`, then `seed.sql`, as an admin account) is in the README. If the database is unreachable, the API returns a friendly "offline" message.
+
 The AI concierge is part of the API (`POST api/concierge`). It needs `ANTHROPIC_API_KEY` in the repo-root `.env`; without it the chat shows a friendly error and the rest of the site keeps working.
 
 ## Structure
 
 ```
-.env                          Secrets (ANTHROPIC_API_KEY). Git-ignored; never commit.
+.env                          Secrets (ANTHROPIC_API_KEY, DB_APP_CONNECTION, DB admin login). Git-ignored; never commit.
 .github/workflows/deploy-azure.yml   Publish and deploy to Azure App Service on push to main
 API/                          ASP.NET Core Web API (.NET 10, controllers); also serves Client/
 ├── Controllers/              One controller per resource (rooms, rates, reservations, holds, blocks, demo)
 ├── Models/HotelModels.cs     Response shapes and request bodies
-├── Services/HotelStore.cs    In-memory data, sample data, and all booking/pricing rules
+├── Services/HotelStore.cs    All booking, availability, and pricing rules, on MySQL (Dapper)
+├── Services/HotelRuleExceptionFilter.cs   Rule errors → 400/404, database errors → friendly 503
 ├── Services/DotEnv.cs        Loads the repo-root .env at startup
 ├── Controllers/ConciergeController.cs   POST api/concierge (streams NDJSON, rate limited)
+├── Database/
+│   ├── schema.sql            Tables (run by hand as admin)
+│   ├── seed.sql              Hotel, room types, 120 rooms (run once by hand as admin)
+│   ├── migrate-*.sql         Changes for databases built from an older schema.sql (run by hand as admin)
+│   ├── Db.cs                 Opens connections as druid_app from DB_APP_CONNECTION
+│   └── SampleData.cs         Sample reservations, hold, and event block for "Reset sample data"
 └── Concierge/
     ├── hotel-info.json       Editable hotel facts loaded into the concierge prompt (TODOs = unknown)
     ├── ConciergePrompt.cs    Server-side system prompt (identity, scope, page context)
@@ -66,19 +77,37 @@ Client/
 - **Each site area is a view inside `index.html`**: a `<section class="view" data-view="...">` shown/hidden by the router.
 - **The server owns the rules.** Pricing, availability, and booking validation live in `HotelStore`; the client may pre-validate for fast feedback but never decides prices or availability. API errors are `{ "message": "..." }` in the site's voice, shown to the user as-is.
 - **The client never talks to Anthropic or the database directly.** The browser calls our backend; only the backend uses the API key and the database.
-- **Secrets live in `.env` only.** Read `ANTHROPIC_API_KEY` from the environment. Never hard-code keys, never put them in `Client/`, never log them, and never commit `.env`.
+- **Secrets live in `.env` only.** Read `ANTHROPIC_API_KEY` and `DB_APP_CONNECTION` from the environment. Never hard-code keys, never put them in `Client/`, never log them, and never commit `.env`.
 - **Payment form is UI only.** Validate in the browser, then discard. Never store, log, or transmit card numbers, expiry, or CVC. A reservation records only paid/not-paid status and whether the guest opted into card-on-file. Card-on-file is an optional checkbox.
 - **Scope changes go through Mr. Rogers.** Do not add significant features beyond the spec without the user confirming; flag ideas instead.
 
 ## Backend, database, and AI
 
-**Backend:** C# / ASP.NET Core Web API (`API/`, .NET 10), including the AI concierge. **Still to decide:** database engine.
+**Backend:** C# / ASP.NET Core Web API (`API/`, .NET 10), including the AI concierge. **Database:** MySQL 8 (`mis321` schema), accessed with MySqlConnector + Dapper. Live: Azure Database for MySQL Flexible Server `druid-city-db` (see "Live database on Azure" below).
 
 - **CRUD endpoints** cover everything the `api` object exposes today (reservations, rooms, availability, holds, event blocks, rates, guests). Keep the request and response shapes matching what the views already expect, so swapping the `api` methods to `fetch()` doesn't require view changes.
 - **Validate on the server** as well as in the browser. Never trust client input, and use parameterized queries (no SQL built by string concatenation).
 - **Business rules belong to the backend:** availability, rate calculation (weekend = Friday/Saturday nights), and "existing reservations keep their booked totals". The client may display them but the server is the source of truth.
 - **The database never stores card data.** The payment rule above applies to the database too: store only paid/not-paid status and the card-on-file opt-in.
-- **Seed data:** provide a way to load the 120-room sample hotel so the "Reset sample data" link in the Staff Portal keeps working.
+- **Availability is calculated, not stored:** from booking, `maintenance_block` (holds), and event block overlaps. Writes that take a room lock the room rows (`SELECT ... FOR UPDATE`) and re-check overlaps in one transaction, so the same room can't be booked twice.
+- **Seed data:** `seed.sql` loads the hotel, room types, and 120 rooms. "Reset sample data" (`POST api/demo/reset`) clears bookings, guests, holds, blocks, and special rates, restores default rates, and writes the sample data as `druid_app`.
+- **Reset is destructive once data persists.** It only runs in Development or while the server has `ALLOW_SAMPLE_RESET=true`; otherwise it returns 403. Keep it that way until staff sign-in exists.
+- **Use hotel-local time for "today".** The hotel is in Tuscaloosa (`America/Chicago`) and Azure runs on UTC. Business dates (past-arrival checks, hold/block filters, sample-data dates) use `HotelStore.Today()`, never `DateTime.Now` or `DateTime.Today`.
+- **Guest records aren't rewritten by bookings.** `guest` is one row per email from the first booking; each `booking` keeps its own `guest_first_name` / `guest_last_name` / `guest_phone`, and staff screens read those. A booking with an existing email must not change another reservation's contact details.
+- **Validate every date range on the server:** checkout after checkin, a maximum stay length, and inactive rooms excluded, on every endpoint that takes dates (including the single-room check), not just search and booking.
+- **Writes must report what actually happened.** If an UPDATE affects 0 rows, return an error instead of 200. Repeat actions, such as cancelling a booking that is already cancelled, must not add duplicate side effects like log messages.
+- **Staff lists must scale with persisted data.** Filter by date or status, or page the results. Don't load every booking ever stored.
+- **One copy of write logic.** Sample-data seeding should reuse `HotelStore`'s insert and rate functions, not keep its own copies.
+- **Schema changes:** update `schema.sql` (fresh installs) and add a numbered `migrate-NNN-*.sql` for existing databases, including the Azure one.
+
+### Live database on Azure
+
+- **Server:** `druid-city-db.mysql.database.azure.com` (Burstable B1ms, MySQL 8.0, 32 GB, auto-grow off), resource group `TuscaloosaDruidHotel_group`, region **Belgium Central**. Azure for Students only offers MySQL there and in Denmark East, not in North Central US where the App Service is. Expect a little latency per query.
+- **Free offer:** 12 months of B1ms on Azure for Students (started October 2026). Don't change the size, storage, auto-grow, or high availability, or it becomes billable.
+- **Logins:** admin (`DB_ADMIN_USER` / `DB_ADMIN_PASSWORD` in `.env`) for schema changes only; the API uses `druid_app`. The App Service has `DB_APP_CONNECTION` set as an environment variable.
+- **Firewall:** "Allow Azure services" plus individual developer IPs. Add yours to load SQL from your machine.
+- **Client tool:** connect with a MySQL 8.x client (`brew install mysql-client@8.4`). Newer clients can't use the server's `mysql_native_password` login.
+- **Loading sample data on the live site:** set `ALLOW_SAMPLE_RESET=true` on the App Service, click Reset sample data once, then remove the setting.
 
 ### AI (Anthropic SDK)
 
@@ -89,6 +118,21 @@ Client/
 - **Handle API errors and refusals gracefully.** The site must keep working (search, booking, Staff Portal) if the AI service is unavailable.
 - **Which AI features to build** (guest concierge chat, staff assistant, etc.) goes through Mr. Rogers like any other scope change. Flag ideas; don't build unconfirmed features.
 - **Concierge model:** set with the `CONCIERGE_MODEL` env var (default `claude-opus-5-5`). The system prompt lives only on the server; the client sends just the chat messages and which site section it is on.
+### Database Safety Rules 
+**Two database users, least privilege.**
+- `druid_app`: SELECT, INSERT, UPDATE, DELETE only. Used by the service layer. No CREATE, DROP, ALTER, or GRANT.
+- `druid_llm_ro`: SELECT only, on read-only views (room types, rooms, rates, amenities, availability). No access to guest, payment, or booking_message data. Connection and execution time capped.
+- Schema changes and seeding run by hand under a separate admin account. The app never connects as root.
+- **The model never writes data with SQL.** Bookings, cancellations, holds, and payments go through service-layer tool functions with parameterized queries, as stated above.
+- **If we add a plain-English query feature** (model writes its own SQL), it must:
+- connect only as `druid_llm_ro`
+- give the model the schema of the views only (table names, column names, types, nullability), never row data or connection strings
+- validate in C# before running: one statement only, must start with SELECT, reject DROP, DELETE, UPDATE, INSERT, ALTER, TRUNCATE, CREATE, EXEC, EXECUTE, GRANT, REVOKE, INTO OUTFILE, comments (`--`, `/*`, `#`), and `;`. Match whole keywords so columns like `created_at` and `updated_at` aren't blocked
+- cap results at 50 rows
+- have a system prompt that says: get the schema first, SELECT only, never attempt writes, explain results in plain language
+- This feature is a scope change and needs team and Mr. Rogers approval before it's built.
+- **Errors:** catch database errors and return `{ "message": "..." }`. Never expose stack traces, SQL text, or connection details to the client or the model.
+- **Defense in depth:** database permissions are the real protection; code validation and prompt rules are backup layers. Don't rely on any single layer.
 
 ### AI Concierge — planned features
 
@@ -110,7 +154,7 @@ The file is one IIFE in `'use strict'` mode, organized into numbered sections. K
 
 - **All data access goes through the `api` object**, which wraps `fetch()` via `request()` against the same-origin `/api`. Views never call `fetch()` directly. JSON shapes from the API match what the views expect; keep them in sync when changing either side.
 - `ROOM_TYPES` is loaded from `GET api/rooms/types` at startup, before the router runs.
-- Server data is in memory and resets when the API restarts. The Staff Portal has a "Reset sample data" link.
+- Server data lives in MySQL and survives API restarts. The Staff Portal's "Reset sample data" link restores the sample reservations, hold, and event block.
 - `api.askConcierge()` calls `POST api/concierge` and reads the streamed NDJSON reply. The concierge widget is initialized before the room-types load, so the widget still appears (with a friendly error) if the API is down.
 - Show loading and error states in views, since calls go over the network.
 - Escape any user- or data-derived text with `esc()` before inserting it into HTML.
