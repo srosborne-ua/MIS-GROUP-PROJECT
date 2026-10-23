@@ -66,7 +66,9 @@ CREATE TABLE room (
     CONSTRAINT chk_room_floor CHECK (floor = room_number DIV 100)   -- 214 is on floor 2
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- One row per guest email; contact details are updated on each new booking.
+-- One row per guest email, holding the details from their first booking. A later
+-- booking never rewrites this row; each booking keeps its own copy of the name and
+-- phone entered with it (booking.guest_first_name etc.).
 CREATE TABLE guest (
     id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
     first_name  VARCHAR(60)  NOT NULL,
@@ -85,6 +87,9 @@ CREATE TABLE booking (
     room_id           INT UNSIGNED NOT NULL,
     room_type_id      INT UNSIGNED NOT NULL,          -- type at time of booking
     guest_id          INT UNSIGNED NOT NULL,
+    guest_first_name  VARCHAR(60)  NOT NULL,          -- contact details as entered for this booking
+    guest_last_name   VARCHAR(60)  NOT NULL,
+    guest_phone       VARCHAR(30)  NOT NULL,
     check_in          DATE NOT NULL,
     check_out         DATE NOT NULL,                  -- exclusive
     guest_count       TINYINT UNSIGNED NOT NULL,

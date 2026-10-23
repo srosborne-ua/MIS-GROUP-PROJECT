@@ -236,8 +236,8 @@ public class HotelStore(Db db)
             """
             SELECT 'reservation' AS kind, b.id AS ref_id, b.check_in AS first_night,
                    DATE_SUB(b.check_out, INTERVAL 1 DAY) AS last_night,
-                   CONCAT(g.first_name, ' ', g.last_name) AS label
-            FROM booking b JOIN room r ON r.id = b.room_id JOIN guest g ON g.id = b.guest_id
+                   CONCAT(b.guest_first_name, ' ', b.guest_last_name) AS label
+            FROM booking b JOIN room r ON r.id = b.room_id
             WHERE r.hotel_id = @HotelId AND r.room_number = @Number
               AND b.status = 'confirmed' AND b.check_out > @Today
             UNION ALL
@@ -295,29 +295,31 @@ public class HotelStore(Db db)
         var paid = input.PaymentStatus == "paid";
         var reminder = checkin.AddDays(-2) > Today() ? checkin.AddDays(-2) : Today();
 
-        // One guest per email; a new booking updates their name and phone.
+        // One guest per email. An existing guest row is reused but never rewritten, so a
+        // booking can't change the contact details on someone's earlier reservations.
+        // The name and phone entered here are kept on the booking itself.
         var guestId = await conn.ExecuteScalarAsync<int>(
             """
             INSERT INTO guest (first_name, last_name, email, phone, created_at, updated_at)
             VALUES (@FirstName, @LastName, @Email, @Phone, @Now, @Now)
-            ON DUPLICATE KEY UPDATE first_name = @FirstName, last_name = @LastName, phone = @Phone,
-                                    updated_at = @Now, id = LAST_INSERT_ID(id);
+            ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id);
             SELECT LAST_INSERT_ID();
             """,
             new { guest.FirstName, guest.LastName, guest.Email, guest.Phone, Now = now }, tx);
 
         var bookingId = await conn.ExecuteScalarAsync<int>(
             """
-            INSERT INTO booking (room_id, room_type_id, guest_id, check_in, check_out, guest_count,
-                                 status, source, special_requests, total, created_at)
-            VALUES (@RoomId, @RoomTypeId, @GuestId, @Checkin, @Checkout, @Guests,
-                    'confirmed', @Source, @Requests, @Total, @Now);
+            INSERT INTO booking (room_id, room_type_id, guest_id, guest_first_name, guest_last_name, guest_phone,
+                                 check_in, check_out, guest_count, status, source, special_requests, total, created_at)
+            VALUES (@RoomId, @RoomTypeId, @GuestId, @FirstName, @LastName, @Phone,
+                    @Checkin, @Checkout, @Guests, 'confirmed', @Source, @Requests, @Total, @Now);
             SELECT LAST_INSERT_ID();
             """,
             new
             {
-                RoomId = room.Id, room.RoomTypeId, GuestId = guestId, Checkin = checkin, Checkout = checkout,
-                Guests = guests, Source = isStaff ? "staff" : "web", guest.Requests, quote.Total, Now = now
+                RoomId = room.Id, room.RoomTypeId, GuestId = guestId, guest.FirstName, guest.LastName, guest.Phone,
+                Checkin = checkin, Checkout = checkout, Guests = guests, Source = isStaff ? "staff" : "web",
+                guest.Requests, quote.Total, Now = now
             }, tx);
 
         await conn.ExecuteAsync(
@@ -519,7 +521,11 @@ public class HotelStore(Db db)
 
     /* ---------- Rules ---------- */
 
-    private static DateOnly Today() => DateOnly.FromDateTime(DateTime.Now);
+    // The hotel's calendar day in Tuscaloosa. The server clock is UTC on Azure, which
+    // would roll over to tomorrow around 7 PM local time.
+    private static readonly TimeZoneInfo HotelTimeZone = TimeZoneInfo.FindSystemTimeZoneById("America/Chicago");
+
+    private static DateOnly Today() => DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, HotelTimeZone));
 
     private static DateOnly? ParseDate(string? value) =>
         DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
@@ -650,8 +656,8 @@ public class HotelStore(Db db)
     {
         var roomFilter = rooms == null ? "" : " AND r.room_number IN @Rooms";
         var sql = $"""
-            SELECT r.room_number, 'reservation' AS kind, b.id AS ref_id, CONCAT(g.first_name, ' ', g.last_name) AS text
-            FROM booking b JOIN room r ON r.id = b.room_id JOIN guest g ON g.id = b.guest_id
+            SELECT r.room_number, 'reservation' AS kind, b.id AS ref_id, CONCAT(b.guest_first_name, ' ', b.guest_last_name) AS text
+            FROM booking b JOIN room r ON r.id = b.room_id
             WHERE r.hotel_id = @HotelId AND b.status = 'confirmed'
               AND b.check_in < @End AND b.check_out > @Start{roomFilter}
             UNION ALL
@@ -686,7 +692,7 @@ public class HotelStore(Db db)
             $"""
             SELECT b.id, r.room_number, t.code, b.check_in, b.check_out, b.guest_count, b.status, b.source,
                    b.special_requests, b.total, b.created_at,
-                   g.first_name, g.last_name, g.email, g.phone,
+                   b.guest_first_name AS first_name, b.guest_last_name AS last_name, g.email, b.guest_phone AS phone,
                    p.status AS payment_status, p.card_on_file
             FROM booking b
             JOIN room r ON r.id = b.room_id

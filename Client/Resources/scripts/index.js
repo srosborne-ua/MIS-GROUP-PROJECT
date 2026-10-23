@@ -905,7 +905,12 @@
     function setupStaff() {
         $('[data-action="reset-demo"]').addEventListener('click', async () => {
             if (!window.confirm('Reset all reservations, holds, blocks, and rates to the sample data?')) return;
-            await api.resetDemoData();
+            try {
+                await api.resetDemoData();
+            } catch (err) {
+                window.alert(err.message);
+                return;
+            }
             selectedRoom = null;
             router();
         });

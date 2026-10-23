@@ -105,14 +105,14 @@ public static class SampleData
 
             await conn.ExecuteAsync(
                 """
-                INSERT INTO booking (id, room_id, room_type_id, guest_id, check_in, check_out, guest_count,
-                                     status, source, special_requests, total, created_at)
-                VALUES (@Id, @RoomId, @RoomTypeId, @GuestId, @Checkin, @Checkout, @Guests,
-                        @Status, @Source, @Requests, @Total, @Created)
+                INSERT INTO booking (id, room_id, room_type_id, guest_id, guest_first_name, guest_last_name, guest_phone,
+                                     check_in, check_out, guest_count, status, source, special_requests, total, created_at)
+                VALUES (@Id, @RoomId, @RoomTypeId, @GuestId, @First, @Last, @Phone,
+                        @Checkin, @Checkout, @Guests, @Status, @Source, @Requests, @Total, @Created)
                 """,
                 new
                 {
-                    Id = bookingId, RoomId = room.Id, room.RoomTypeId, GuestId = guestId,
+                    Id = bookingId, RoomId = room.Id, room.RoomTypeId, GuestId = guestId, s.First, s.Last, Phone = Phone(i),
                     Checkin = checkin, Checkout = checkout, s.Guests, s.Status,
                     Source = Source(i), s.Requests, quote.Total, Created = created
                 }, tx);
