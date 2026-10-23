@@ -10,9 +10,9 @@ public class DemoController(HotelStore store) : ControllerBase
 {
     // POST api/demo/reset
     [HttpPost("reset")]
-    public IActionResult Reset()
+    public async Task<IActionResult> Reset()
     {
-        store.ResetDemoData();
+        await store.ResetDemoDataAsync();
         return NoContent();
     }
 }

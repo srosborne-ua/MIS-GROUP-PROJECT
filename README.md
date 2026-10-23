@@ -11,12 +11,19 @@ The client's measure of success: the site should make life easy, both for guests
 | Work | State |
 | --- | --- |
 | **Backend API:** an ASP.NET Core Web API in `API/` that owns every pricing, availability, and booking rule | Built; the front end calls it for all data |
-| **Database:** replace the in-memory store with full CRUD for reservations, rooms, holds, event blocks, rates, and guests | Not started; database engine still to be decided |
+| **Database:** replace the in-memory store with full CRUD for reservations, rooms, holds, event blocks, rates, and guests | Built on MySQL; the API reads and writes it for all data |
 | **AI:** the Druid AI Assistant concierge chat, using Claude through the official Anthropic C# SDK | First version built (questions and answers only) |
 
 ## Running the site
 
-The site needs two processes: the API (.NET 10 SDK) and a static server for the client.
+The site needs MySQL 8.0.16 or later, plus two processes: the API (.NET 10 SDK) and a static server for the client.
+
+**One-time database setup** (as an admin account such as root, for example in MySQL Workbench):
+
+1. Run `API/Database/schema.sql` to create the tables in the `mis321` schema.
+2. Run `API/Database/seed.sql` to load the hotel, room types, and 120 rooms.
+3. Create the app user `druid_app` with `SELECT, INSERT, UPDATE, DELETE` on `mis321` only, and put its connection string in `.env` as `DB_APP_CONNECTION`.
+4. Start the API and click **Reset sample data** in the Staff Portal (or `POST api/demo/reset`) to load the sample reservations, hold, and event block.
 
 ```sh
 dotnet run --project API --launch-profile http          # API on http://localhost:5269
@@ -25,7 +32,7 @@ python3 -m http.server 8000 --directory Client          # site on http://localho
 
 Then visit <http://localhost:8000>. Opening `Client/index.html` directly from disk won't work, because the browser won't let a `file://` page call the API. If you serve the client on a different port, add that origin to `Cors:AllowedOrigins` in `API/appsettings.json`.
 
-The AI concierge needs `ANTHROPIC_API_KEY` in a `.env` file at the project root (git-ignored; never commit it). Without the key, the chat shows a friendly error and the rest of the site works normally.
+The AI concierge needs `ANTHROPIC_API_KEY` in a `.env` file at the project root (git-ignored; never commit it). Without the key, the chat shows a friendly error and the rest of the site works normally. If the database is unreachable, the API returns a friendly "offline" message instead.
 
 There is no automated test suite. Check changes by walking through the affected views at both phone and desktop widths.
 
@@ -36,7 +43,8 @@ There is no automated test suite. Check changes by walking through the affected 
 API/                          ASP.NET Core Web API (.NET 10)
 ├── Controllers/              One controller per resource
 ├── Models/HotelModels.cs     Response shapes and request bodies
-├── Services/HotelStore.cs    In-memory data, sample data, and all booking and pricing rules
+├── Services/HotelStore.cs    All booking, availability, and pricing rules, on MySQL
+├── Database/                 schema.sql, seed.sql, connection factory, and sample data for Reset
 ├── Services/DotEnv.cs        Loads .env at startup
 └── Concierge/                AI concierge: prompt, hotel facts, Anthropic SDK call, tools
 Client/
@@ -77,7 +85,7 @@ Reached from a footer link. It covers every staff requirement from the client:
 | `#/staff/events` | Block off groups of rooms for events |
 | `#/staff/rates` | View and edit default rates, add special date rates, preview the next 14 nights |
 
-The **Reset sample data** link restores the 120-room sample hotel with its sample reservations, hold, and event block.
+The **Reset sample data** link clears every reservation, guest, hold, event block, and special rate in the database, restores the default rates, and loads the sample reservations, hold, and event block. Rooms and room types are left as `seed.sql` loaded them.
 
 ## Hotel model
 
@@ -93,7 +101,9 @@ The browser talks only to our API; it never calls Anthropic or a database direct
 - **The server owns the rules.** Pricing, availability, and booking validation live in `API/Services/HotelStore.cs`. The client checks forms for fast feedback but never decides prices or availability.
 - **One `api` object on the client.** All data access in `index.js` goes through it (section 3), calling `http://localhost:5269/api`.
 - **Errors** come back as `{ "message": "..." }` in the site's voice and are shown to the user as-is.
-- **Storage:** data is in memory for now and **resets when the API restarts**. The database will replace it with the same request and response shapes, so the views won't need to change.
+- **Storage:** MySQL (`mis321` schema), reached only by the API as `druid_app` with parameterized queries. Data survives API restarts.
+- **Availability is calculated, not stored:** a room is open when no confirmed booking, hold, or event block overlaps the requested nights.
+- **No double-booking:** creating a booking, hold, or event block locks the room rows, re-checks for overlaps, and then inserts, all in one transaction.
 
 | Resource | Endpoints |
 | --- | --- |
@@ -151,7 +161,13 @@ The Druid AI Assistant is a chat widget on every page, served by `POST api/conci
 
 **Backend and AI**
 
-14. **Backend stack:** the backend is C# only: an ASP.NET Core Web API, which also hosts the AI concierge. The database engine is still to be decided.
+14. **Backend stack:** the backend is C# only: an ASP.NET Core Web API, which also hosts the AI concierge. The database is MySQL, accessed with MySqlConnector and Dapper.
 15. **AI concierge scope:** answers hotel and booking questions only. It cannot book, check availability, or take payment; it sends guests to the booking page. It only states facts from `hotel-info.json`.
 16. **Concierge and online payment:** the concierge tells guests online payment is "coming soon" (`payment.online_payment_available: false`), even though the booking form already offers a UI-only "pay now" option. Flip the flag once real payment ships.
 17. **Concierge welcome card:** it shows on first visit and tucks into a small "Ask the concierge" button when the visitor scrolls or uses the page, so it never covers content. If a guest minimizes it, it stays minimized for the browser session.
+
+**Database**
+
+18. **One guest per email:** a returning guest's name and phone are updated on each new booking, so older reservations show their latest contact details.
+19. **Reset sample data deletes real data:** it clears every reservation and guest. It must be disabled or put behind staff sign-in before launch.
+20. **Payment method:** web bookings record "online" (pay now) or "at the hotel"; staff-created bookings leave the method blank.

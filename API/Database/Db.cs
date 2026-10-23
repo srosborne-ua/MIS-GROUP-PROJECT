@@ -19,15 +19,37 @@ public class Db
     static Db()
     {
         SqlMapper.AddTypeHandler(new DateOnlyHandler());
+        // room_number maps to RoomNumber, and so on.
+        DefaultTypeMap.MatchNamesWithUnderscores = true;
     }
 
-    public MySqlConnection Open()
+    public async Task<MySqlConnection> OpenAsync()
     {
         var connectionString = Environment.GetEnvironmentVariable("DB_APP_CONNECTION");
         if (string.IsNullOrWhiteSpace(connectionString))
             throw new DatabaseUnavailableException("DB_APP_CONNECTION is not set.");
-        var connection = new MySqlConnection(connectionString);
-        connection.Open();
+
+        MySqlConnectionStringBuilder builder;
+        try
+        {
+            // Timestamps are stored in UTC; read them back as UTC so the JSON keeps its "Z".
+            builder = new MySqlConnectionStringBuilder(connectionString) { DateTimeKind = MySqlDateTimeKind.Utc };
+        }
+        catch (ArgumentException)
+        {
+            throw new DatabaseUnavailableException("DB_APP_CONNECTION is not a valid connection string.");
+        }
+
+        var connection = new MySqlConnection(builder.ConnectionString);
+        try
+        {
+            await connection.OpenAsync();
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
         return connection;
     }
 
