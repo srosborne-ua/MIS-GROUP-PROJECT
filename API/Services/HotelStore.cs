@@ -25,7 +25,7 @@ public class HotelRuleException(string message, bool notFound = false) : Excepti
 // runs in a READ COMMITTED transaction that locks the room rows first
 // (SELECT ... FOR UPDATE), then re-checks for overlaps, then inserts. A second
 // writer for the same room waits on the lock and then sees the first one's row.
-public partial class HotelStore(Db db)
+public class HotelStore(Db db)
 {
     private const decimal MaxRate = 999999.99m;   // DECIMAL(8,2)
     private const string ReservationPrefix = "DC-";
@@ -34,8 +34,8 @@ public partial class HotelStore(Db db)
 
     public static readonly Rates DefaultRates = new() { Weekday = 100, Weekend = 150, SuiteWeekday = 100, SuiteWeekend = 150 };
 
-    [GeneratedRegex(@"^[^\s@]+@[^\s@]+\.[^\s@]+$")]
-    private static partial Regex EmailPattern();
+    // Same check as isEmail() in the client.
+    private static readonly Regex EmailPattern = new(@"^[^\s@]+@[^\s@]+\.[^\s@]+$", RegexOptions.Compiled);
 
     private const string RoomSelect = """
         SELECT r.id, r.room_number, r.floor, r.is_active, t.id AS room_type_id, t.code, t.sleeps
@@ -579,7 +579,7 @@ public partial class HotelStore(Db db)
         };
         if (g.FirstName.Length == 0) throw new HotelRuleException("Enter a first name.");
         if (g.LastName.Length == 0) throw new HotelRuleException("Enter a last name.");
-        if (!EmailPattern().IsMatch(g.Email)) throw new HotelRuleException("Enter an email address like name@example.com.");
+        if (!EmailPattern.IsMatch(g.Email)) throw new HotelRuleException("Enter an email address like name@example.com.");
         if (g.FirstName.Length > 60 || g.LastName.Length > 60) throw new HotelRuleException("Names can be up to 60 characters.");
         if (g.Email.Length > 254) throw new HotelRuleException("That email address is too long.");
         if (g.Phone.Length > 30) throw new HotelRuleException("That phone number is too long.");
