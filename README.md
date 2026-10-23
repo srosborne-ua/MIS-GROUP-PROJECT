@@ -11,10 +11,21 @@ The client's measure of success: the site should make life easy, both for guests
 | Work | State |
 | --- | --- |
 | **Backend API:** an ASP.NET Core Web API in `API/` that owns every pricing, availability, and booking rule | Built; the front end calls it for all data |
-| **Database:** replace the in-memory store with full CRUD for reservations, rooms, holds, event blocks, rates, and guests | Not started; database engine still to be decided |
+| **Database:** replace the in-memory store with full CRUD for reservations, rooms, holds, event blocks, rates, and guests | Built on MySQL; the API reads and writes it for all data |
 | **AI:** the Druid AI Assistant concierge chat, using Claude through the official Anthropic C# SDK | First version built (questions and answers only) |
 
 ## Running the site
+
+The site needs MySQL 8.0.16 or later. Put the `druid_app` connection string in `.env` as `DB_APP_CONNECTION`: either your own local MySQL (set up below) or the shared Azure database (ask a teammate for the connection string, and add your IP to its firewall).
+
+**One-time local database setup** (as an admin account such as root, for example in MySQL Workbench):
+
+1. Create the `mis321` schema, then run `API/Database/schema.sql` to create the tables.
+2. Run `API/Database/seed.sql` to load the hotel, room types, and 120 rooms.
+3. Create the app user `druid_app` with `SELECT, INSERT, UPDATE, DELETE` on `mis321` only, and put its connection string in `.env` as `DB_APP_CONNECTION`.
+4. Start the API and click **Reset sample data** in the Staff Portal (or `POST api/demo/reset`) to load the sample reservations, hold, and event block.
+
+If your database was built from an earlier `schema.sql`, run the `API/Database/migrate-*.sql` files you haven't run yet, in order.
 
 The API (.NET 10 SDK) serves both the site and its data, so one command runs everything:
 
@@ -24,7 +35,7 @@ dotnet run --project API --launch-profile http          # site and API on http:/
 
 Then visit <http://localhost:5269>. Locally the API serves the `Client/` folder directly, so edits to the HTML, CSS, or JS show up on refresh. Opening `Client/index.html` directly from disk won't work, because the page calls the API at `/api` on the same address.
 
-The AI concierge needs `ANTHROPIC_API_KEY` in a `.env` file at the project root (git-ignored; never commit it). Without the key, the chat shows a friendly error and the rest of the site works normally.
+The AI concierge needs `ANTHROPIC_API_KEY` in a `.env` file at the project root (git-ignored; never commit it). Without the key, the chat shows a friendly error and the rest of the site works normally. If the database is unreachable, the API returns a friendly "offline" message instead.
 
 There is no automated test suite. Check changes by walking through the affected views at both phone and desktop widths.
 
@@ -41,16 +52,29 @@ One-time setup:
 5. **In GitHub** (Settings > Secrets and variables > Actions): add the secret `AZURE_WEBAPP_PUBLISH_PROFILE` (paste the whole publish profile file) and the variable `AZURE_WEBAPP_NAME` (the Web App's name).
 6. **Deploy:** push to `main`, or run the workflow from the Actions tab.
 
-Keep the app at **one instance**: the in-memory data and the concierge rate limit live in the app's memory. On Free F1 the app shuts down when idle, which resets the sample data.
+Keep the app at **one instance**: the concierge rate limit lives in the app's memory.
+
+### Live database
+
+The live data is in **Azure Database for MySQL – Flexible Server** `druid-city-db` (resource group `TuscaloosaDruidHotel_group`). It's in **Belgium Central** because Azure for Students offers MySQL only there and in Denmark East, so each query crosses the Atlantic. It uses the free 12-month offer (Burstable B1ms, 32 GB, storage auto-grow off, no high availability); changing any of those makes it billable.
+
+How it was set up, for rebuilding it:
+
+1. Create the server (MySQL 8.0, the settings above), the `mis321` database, and firewall rules for "Allow Azure services" and your own IP.
+2. As the admin login, run `schema.sql` then `seed.sql`, using a MySQL 8.x client (`brew install mysql-client@8.4`; newer clients can't log in), with `--ssl-mode=REQUIRED`.
+3. Create `druid_app` with `SELECT, INSERT, UPDATE, DELETE` on `mis321` only.
+4. On the App Service, add the environment variable `DB_APP_CONNECTION` = `Server=druid-city-db.mysql.database.azure.com;Database=mis321;User ID=druid_app;Password=…;SslMode=Required;`.
+5. To load the sample reservations, add `ALLOW_SAMPLE_RESET=true` to the App Service, click **Reset sample data** once, then remove it. Without that setting, Reset is turned off on the live site.
 
 ## Project structure
 
 ```
-.env                          Secrets (ANTHROPIC_API_KEY). Git-ignored.
+.env                          Secrets (ANTHROPIC_API_KEY, DB_APP_CONNECTION). Git-ignored.
 API/                          ASP.NET Core Web API (.NET 10)
 ├── Controllers/              One controller per resource
 ├── Models/HotelModels.cs     Response shapes and request bodies
-├── Services/HotelStore.cs    In-memory data, sample data, and all booking and pricing rules
+├── Services/HotelStore.cs    All booking, availability, and pricing rules, on MySQL
+├── Database/                 schema.sql, seed.sql, connection factory, and sample data for Reset
 ├── Services/DotEnv.cs        Loads .env at startup
 └── Concierge/                AI concierge: prompt, hotel facts, Anthropic SDK call, tools
 Client/
@@ -91,7 +115,7 @@ Reached from a footer link. It covers every staff requirement from the client:
 | `#/staff/events` | Block off groups of rooms for events |
 | `#/staff/rates` | View and edit default rates, add special date rates, preview the next 14 nights |
 
-The **Reset sample data** link restores the 120-room sample hotel with its sample reservations, hold, and event block.
+The **Reset sample data** link clears every reservation, guest, hold, event block, and special rate in the database, restores the default rates, and loads the sample reservations, hold, and event block. Rooms and room types are left as `seed.sql` loaded them.
 
 ## Hotel model
 
@@ -107,7 +131,9 @@ The browser talks only to our API; it never calls Anthropic or a database direct
 - **The server owns the rules.** Pricing, availability, and booking validation live in `API/Services/HotelStore.cs`. The client checks forms for fast feedback but never decides prices or availability.
 - **One `api` object on the client.** All data access in `index.js` goes through it (section 3), calling `/api` on the same address that served the page.
 - **Errors** come back as `{ "message": "..." }` in the site's voice and are shown to the user as-is.
-- **Storage:** data is in memory for now and **resets when the API restarts**. The database will replace it with the same request and response shapes, so the views won't need to change.
+- **Storage:** MySQL (`mis321` schema), reached only by the API as `druid_app` with parameterized queries. Data survives API restarts.
+- **Availability is calculated, not stored:** a room is open when no confirmed booking, hold, or event block overlaps the requested nights.
+- **No double-booking:** creating a booking, hold, or event block locks the room rows, re-checks for overlaps, and then inserts, all in one transaction.
 
 | Resource | Endpoints |
 | --- | --- |
@@ -165,9 +191,17 @@ The Druid AI Assistant is a chat widget on every page, served by `POST api/conci
 
 **Backend and AI**
 
-14. **Backend stack:** the backend is C# only: an ASP.NET Core Web API, which also hosts the AI concierge. The database engine is still to be decided.
+14. **Backend stack:** the backend is C# only: an ASP.NET Core Web API, which also hosts the AI concierge. The database is MySQL, accessed with MySqlConnector and Dapper.
 15. **AI concierge scope:** answers hotel and booking questions only. It cannot book, check availability, or take payment; it sends guests to the booking page. It only states facts from `hotel-info.json`.
 16. **Concierge and online payment:** the concierge tells guests online payment is "coming soon" (`payment.online_payment_available: false`), even though the booking form already offers a UI-only "pay now" option. Flip the flag once real payment ships.
 17. **Concierge welcome card:** it shows on first visit and tucks into a small "Ask the concierge" button when the visitor scrolls or uses the page, so it never covers content. If a guest minimizes it, it stays minimized for the browser session.
-18. **Hosting:** the site is hosted on Azure App Service (Linux, Central US) as one app that serves both the site and the API. Mr. Rogers to confirm the hosting cost and whether he wants a custom domain instead of the `azurewebsites.net` address.
-19. **Public demo data:** while the site is public without staff sign-in, it holds sample data only, and anyone can open the Staff Portal and use "Reset sample data". Real guest data must wait for staff authentication.
+18. **Hosting:** the site is hosted on Azure App Service (Linux, North Central US) as one app that serves both the site and the API. Mr. Rogers to confirm the hosting cost and whether he wants a custom domain instead of the `azurewebsites.net` address.
+19. **Public demo data:** while the site is public without staff sign-in, it holds sample data only, and anyone can open the Staff Portal. Real guest data must wait for staff authentication.
+
+**Database**
+
+20. **One guest per email, details per booking:** a returning guest (same email) shares one guest record, but each reservation keeps the name and phone entered with it. A new booking never changes the details on earlier reservations.
+21. **Reset sample data deletes real data:** it clears every reservation and guest, so it is turned off on the live site unless `ALLOW_SAMPLE_RESET=true` is set on the server. It needs staff sign-in before launch.
+22. **Payment method:** web bookings record "online" (pay now) or "at the hotel"; staff-created bookings leave the method blank.
+23. **Database location:** the live database is in Belgium Central (the only free option for Azure for Students), while the site is in North Central US, which adds some delay to each page load. Mr. Rogers to confirm whether that's acceptable or whether to pay for a US-region database.
+24. **"Today" is Tuscaloosa time:** past-arrival checks and the staff lists use the hotel's local date (Central Time), not the server's UTC clock.

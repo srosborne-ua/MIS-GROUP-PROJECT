@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using API.Concierge;
+using API.Database;
 using API.Services;
 
 // Secrets (ANTHROPIC_API_KEY) come from the repo-root .env; load them before anything reads the environment.
@@ -25,6 +26,8 @@ builder.Services.AddControllers(options =>
     })
     .AddJsonOptions(options =>
         options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull);
+// MySQL as druid_app; the connection string is DB_APP_CONNECTION from .env.
+builder.Services.AddSingleton<Db>();
 builder.Services.AddSingleton<HotelStore>();
 
 // Druid AI Assistant (POST api/concierge). Register concierge tools here as
