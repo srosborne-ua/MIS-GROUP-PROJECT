@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using API.Database;
 using API.Models;
 
 namespace API.Services;
@@ -13,15 +14,16 @@ public class HotelRuleException(string message, bool notFound = false) : Excepti
 
 // In-memory hotel data, seeded with the same sample data the client used to keep
 // in localStorage. Registered as a singleton; everything resets when the API
-// restarts. Swap for a database later without changing the controllers.
-public class HotelStore
+// restarts. "Reset sample data" also writes the sample data to MySQL; the rest
+// of the store moves to MySQL next, without changing the controllers.
+public class HotelStore(Db db)
 {
     private const int Floors = 3;
     private const int RoomsPerFloor = 40;
     private const int MaxOnlineNights = 30;
     private static readonly int[] SuiteNumbers = [339, 340];
 
-    private static readonly Rates DefaultRates = new() { Weekday = 100, Weekend = 150, SuiteWeekday = 100, SuiteWeekend = 150 };
+    public static readonly Rates DefaultRates = new() { Weekday = 100, Weekend = 150, SuiteWeekday = 100, SuiteWeekend = 150 };
 
     public static readonly Dictionary<string, RoomType> RoomTypes = new()
     {
@@ -361,7 +363,12 @@ public class HotelStore
 
     public void ResetDemoData()
     {
-        lock (_sync) _state = Seed();
+        lock (_sync)
+        {
+            var fresh = Seed();
+            SampleData.Reset(db, fresh.Rates, Today(), (type, checkin, checkout) => PriceStay(type, checkin, checkout, fresh));
+            _state = fresh;
+        }
     }
 
     /* ---------- Rules ---------- */
@@ -487,53 +494,41 @@ public class HotelStore
             Rooms = BuildRooms()
         };
 
-        // first, last, room, arrive offset, nights, guests, payment, card on file, requests, status
-        (string First, string Last, int Room, int Offset, int Nights, int Guests, string Payment, bool CardOnFile, string Requests, string Status)[] seeds =
-        [
-            ("Eleanor", "Whitfield", 104, -1, 3, 2, "paid", true, "Late arrival, around 10 PM.", "confirmed"),
-            ("Marcus", "Bell", 212, 0, 3, 1, "unpaid", false, "", "confirmed"),
-            ("Priya", "Natarajan", 339, 3, 3, 2, "paid", true, "Celebrating our anniversary.", "confirmed"),
-            ("Thomas", "Greer", 127, 1, 1, 1, "unpaid", false, "", "confirmed"),
-            ("Ruth", "Abernathy", 232, 5, 2, 3, "paid", false, "Quiet room away from the elevator, please.", "confirmed"),
-            ("Daniel", "Okafor", 315, 7, 3, 2, "unpaid", false, "", "confirmed"),
-            ("Caroline", "Hollis", 340, 12, 2, 4, "paid", true, "", "confirmed"),
-            ("Samuel", "Price", 109, 2, 2, 1, "paid", false, "Need a receipt for work.", "confirmed"),
-            ("Grace", "Lee", 205, 4, 2, 2, "unpaid", false, "", "cancelled"),
-            ("Henry", "Castellanos", 136, -6, 2, 2, "paid", false, "", "confirmed")
-        ];
-
-        for (var i = 0; i < seeds.Length; i++)
+        var now = DateTime.UtcNow;
+        for (var i = 0; i < SampleData.Reservations.Length; i++)
         {
-            var s = seeds[i];
+            var s = SampleData.Reservations[i];
             var checkin = t.AddDays(s.Offset);
             var checkout = checkin.AddDays(s.Nights);
             var type = state.Rooms.Find(r => r.Number == s.Room)!.Type;
             var quote = PriceStay(type, checkin, checkout, state);
-            var created = DateTime.UtcNow.AddDays(-(14 - i));
-            var email = s.First.ToLowerInvariant() + "." + s.Last.ToLowerInvariant() + "@example.com";
+            var created = SampleData.CreatedAt(i, now);
+            var email = SampleData.Email(i);
             state.Reservations.Add(new Reservation
             {
-                Id = "DC-" + (1030 + i),
+                Id = "DC-" + (SampleData.FirstReservationId + i),
                 Room = s.Room,
                 Type = type,
                 Checkin = checkin,
                 Checkout = checkout,
                 Guests = s.Guests,
-                Guest = new Guest { FirstName = s.First, LastName = s.Last, Email = email, Phone = "(205) 555-01" + (10 + i), Requests = s.Requests },
+                Guest = new Guest { FirstName = s.First, LastName = s.Last, Email = email, Phone = SampleData.Phone(i), Requests = s.Requests },
                 Nights = quote.Nights,
                 Total = quote.Total,
                 PaymentStatus = s.Payment,
                 CardOnFile = s.CardOnFile,
-                Source = i % 3 == 0 ? "staff" : "web",
+                Source = SampleData.Source(i),
                 Status = s.Status,
                 CreatedAt = created,
                 Messages = [new(created, "system", "Confirmation emailed to " + email + ".")]
             });
         }
 
-        state.Holds.Add(new Hold("H-" + state.NextHoldId++, 118, t, t.AddDays(2), "Maintenance: HVAC service", DateTime.UtcNow));
-        state.Blocks.Add(new Block("B-" + state.NextBlockId++, "Abernathy–Hollis wedding party",
-            t.AddDays(20), t.AddDays(21), Enumerable.Range(201, 10).ToList(), DateTime.UtcNow));
+        var hold = SampleData.Hold;
+        state.Holds.Add(new Hold("H-" + state.NextHoldId++, hold.Room, t.AddDays(hold.Start), t.AddDays(hold.End), hold.Reason, now));
+        var block = SampleData.Block;
+        state.Blocks.Add(new Block("B-" + state.NextBlockId++, block.Name,
+            t.AddDays(block.Start), t.AddDays(block.End), block.Rooms.ToList(), now));
         return state;
     }
 }
