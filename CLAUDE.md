@@ -14,7 +14,9 @@ The long-term project is an "AI Concierge for Hospitality Bookings".
 - **A MySQL database** behind the API, with full CRUD (create, read, update, delete) for reservations, rooms, holds/blocks, rates, and guests.
 - **AI functionality** using Claude through the **official Anthropic SDK**, starting with the Druid AI Assistant concierge chat.
 
-**Current goal: run the live Azure site on the MySQL database.** The database is already live on Azure (schema, rooms, and sample data loaded); the `database-integration` branch brings in the database code from Zach's PR #2 plus fixes. Merging it to `main` deploys it.
+**Live:** the Azure site runs on the MySQL database (Zach's PR #2 plus fixes, merged in PR #3).
+
+**In progress, not merged:** RAG for the concierge on the `concierge-rag` branch (knowledge documents searched with model-written, validated read-only SQL). It needs team and Mr. Rogers' approval before it goes to `main` (README assumption 25).
 
 Success definition from the client: the site should make life easy, both for guests booking and for staff managing.
 
@@ -39,7 +41,8 @@ The AI concierge is part of the API (`POST api/concierge`). It needs `ANTHROPIC_
 ## Structure
 
 ```
-.env                          Secrets (ANTHROPIC_API_KEY, DB_APP_CONNECTION, DB admin login). Git-ignored; never commit.
+.env                          Secrets (ANTHROPIC_API_KEY, DB_APP_CONNECTION, DB_LLM_RO_CONNECTION, DB admin login). Git-ignored; never commit.
+.env.example                  Variable names with placeholders (committed)
 .github/workflows/deploy-azure.yml   Publish and deploy to Azure App Service on push to main
 API/                          ASP.NET Core Web API (.NET 10, controllers); also serves Client/
 ├── Controllers/              One controller per resource (rooms, rates, reservations, holds, blocks, demo)
@@ -52,13 +55,17 @@ API/                          ASP.NET Core Web API (.NET 10, controllers); also 
 │   ├── schema.sql            Tables (run by hand as admin)
 │   ├── seed.sql              Hotel, room types, 120 rooms (run once by hand as admin)
 │   ├── migrate-*.sql         Changes for databases built from an older schema.sql (run by hand as admin)
+│   ├── create-llm-ro-user.sql   Creates druid_llm_ro (SELECT on v_knowledge_documents only)
 │   ├── Db.cs                 Opens connections as druid_app from DB_APP_CONNECTION
+│   ├── ReadOnlyDb.cs         Opens connections as druid_llm_ro from DB_LLM_RO_CONNECTION (with time caps)
 │   └── SampleData.cs         Sample reservations, hold, and event block for "Reset sample data"
 └── Concierge/
     ├── hotel-info.json       Editable hotel facts loaded into the concierge prompt (TODOs = unknown)
     ├── ConciergePrompt.cs    Server-side system prompt (identity, scope, page context)
     ├── ConciergeService.cs   Anthropic SDK call, history window, streaming, tool loop
-    └── ConciergeTools.cs     Tool registry (empty for now)
+    ├── ConciergeTools.cs     Tool registry (knowledge tools when DB_LLM_RO_CONNECTION is set)
+    ├── KnowledgeTools.cs     get_knowledge_schema and search_knowledge (RAG, read-only)
+    └── KnowledgeQueryValidator.cs   Checks model-written SQL before it runs
 Client/
 ├── Resources/
 │   ├── images/               Placeholder photography (must be replaced before launch)
@@ -99,6 +106,7 @@ Client/
 - **Staff lists must scale with persisted data.** Filter by date or status, or page the results. Don't load every booking ever stored.
 - **One copy of write logic.** Sample-data seeding should reuse `HotelStore`'s insert and rate functions, not keep its own copies.
 - **Schema changes:** update `schema.sql` (fresh installs) and add a numbered `migrate-NNN-*.sql` for existing databases, including the Azure one.
+- **Hotel facts: the database wins.** When `hotel-info.json` or the concierge's knowledge documents disagree with the database (for example `hotel` check-in/out times, `room_type` sizes, occupancy, and rates), treat the database as correct and update the JSON and documents to match. Facts the database doesn't hold (taxes, policies, amenities, address) stay TODO until Mr. Rogers confirms them.
 
 ### Live database on Azure
 
@@ -121,7 +129,7 @@ Client/
 ### Database Safety Rules 
 **Two database users, least privilege.**
 - `druid_app`: SELECT, INSERT, UPDATE, DELETE only. Used by the service layer. No CREATE, DROP, ALTER, or GRANT.
-- `druid_llm_ro`: SELECT only, on read-only views (room types, rooms, rates, amenities, availability). No access to guest, payment, or booking_message data. Connection and execution time capped.
+- `druid_llm_ro`: SELECT only, on read-only views. Today that is `v_knowledge_documents` only; add views (for example room types or rates) one grant at a time. No access to guest, payment, or booking_message data. Connection and execution time capped. Used only by `ReadOnlyDb`.
 - Schema changes and seeding run by hand under a separate admin account. The app never connects as root.
 - **The model never writes data with SQL.** Bookings, cancellations, holds, and payments go through service-layer tool functions with parameterized queries, as stated above.
 - **If we add a plain-English query feature** (model writes its own SQL), it must:
@@ -136,7 +144,7 @@ Client/
 
 ### AI Concierge — planned features
 
-- Current state: Druid AI Assistant answers hotel and booking questions only, is aware of which site section the user is on (main / booking / employee portal), and is restricted to booking-related topics.
+- Current state: Druid AI Assistant answers hotel and booking questions only (from `hotel-info.json`, or from the knowledge documents when `DB_LLM_RO_CONNECTION` is set), is aware of which site section the user is on (main / booking / employee portal), and is restricted to booking-related topics.
 - Planned: booking rooms directly through the concierge and checking room availability through it, via Anthropic tool use calling the site's existing booking and availability logic.
 - Planned: in-site payment (credit card entry during booking). When it ships, update the payment flag in the hotel info file so the concierge tells guests they can pay online.
 - Until then, the concierge redirects booking and availability requests to the booking page. Keep the concierge server code (`ConciergeService` / `ConciergeTools`) structured so tools can be added without a rewrite.

@@ -2,7 +2,7 @@
     "_readme": "Hotel facts for Druid AI Assistant. This file is loaded into the concierge's system prompt on the server at startup (restart the server after editing). Any value containing TODO is treated as unknown: the concierge will NOT state it and will refer guests to the front desk instead. Replace each TODO with the confirmed fact from Mr. Rogers.",
 
     "hotel": {
-        "name": "TODO: confirm the hotel's official name with Mr. Rogers (the website currently uses the working brand 'Druid City Hotel')",
+        "name": "Druid City Hotel",
         "type": "Boutique hotel",
         "city": "Tuscaloosa, Alabama",
         "address": "TODO: street address",
@@ -22,12 +22,11 @@
         "bed_mix": "About one third of rooms have a king bed. The rest are split between queen rooms and twin rooms.",
         "master_suites": "2 large master suites on the third floor, counted within the 120 rooms.",
         "room_types": [
-            { "name": "King", "beds": "One king bed" },
-            { "name": "Double Queen", "beds": "Two queen beds" },
-            { "name": "Twin", "beds": "Two twin beds" },
-            { "name": "Master Suite", "beds": "TODO: confirm suite bed and layout details" }
-        ],
-        "room_sizes_and_occupancy": "TODO: confirm room sizes and maximum occupancy per room type"
+            { "name": "The King", "beds": "One king bed", "size": "340 sq ft", "sleeps": 2, "description": "A generous king, a writing desk by the window, and a rain shower built for lingering." },
+            { "name": "The Double Queen", "beds": "Two queen beds", "size": "380 sq ft", "sleeps": 4, "description": "Room for the whole party: two queens, a lounge chair, and space to spread out on game weekend." },
+            { "name": "The Twin", "beds": "Two twin beds", "size": "300 sq ft", "sleeps": 2, "description": "Two crisply made twins for colleagues, siblings, or old roommates back for homecoming." },
+            { "name": "The Master Suite", "beds": "One king bed and a separate parlor", "size": "850 sq ft", "sleeps": 4, "description": "Just two of them, on the top floor: a parlor for entertaining, a soaking tub, and a view over the oaks." }
+        ]
     },
 
     "rates": {
@@ -36,7 +35,7 @@
         "weekend_definition": "Friday and Saturday nights are weekend nights.",
         "rate_notes": "These are default rates. Staff can adjust rates (including special rates for specific dates) in the employee portal, so the exact total for a stay is always shown on the booking page after choosing dates. Prices shown are before taxes.",
         "taxes_and_fees": "TODO: lodging tax and any fees",
-        "suite_rates": "TODO: confirm whether master suites have their own rate"
+        "suite_rates": "Master suites use the same default rates as the other rooms ($100 weeknight, $150 weekend)."
     },
 
     "booking": {
@@ -57,8 +56,8 @@
     },
 
     "policies": {
-        "check_in_time": "TODO: check-in time",
-        "check_out_time": "TODO: check-out time",
+        "check_in_time": "3:00 PM",
+        "check_out_time": "11:00 AM",
         "cancellation_policy": "TODO: cancellation policy",
         "pet_policy": "TODO: pet policy",
         "parking": "TODO: parking details (self-park, valet, cost)",
