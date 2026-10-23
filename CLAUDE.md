@@ -87,6 +87,21 @@ Client/
 - **Handle API errors and refusals gracefully.** The site must keep working (search, booking, Staff Portal) if the AI service is unavailable.
 - **Which AI features to build** (guest concierge chat, staff assistant, etc.) goes through Mr. Rogers like any other scope change. Flag ideas; don't build unconfirmed features.
 - **Concierge model:** set with the `CONCIERGE_MODEL` env var (default `claude-opus-5-5`). The system prompt lives only on the server; the client sends just the chat messages and which site section it is on.
+### Database Safety Rules 
+**Two database users, least privilege.**
+- `druid_app`: SELECT, INSERT, UPDATE, DELETE only. Used by the service layer. No CREATE, DROP, ALTER, or GRANT.
+- `druid_llm_ro`: SELECT only, on read-only views (room types, rooms, rates, amenities, availability). No access to guest, payment, or booking_message data. Connection and execution time capped.
+- Schema changes and seeding run by hand under a separate admin account. The app never connects as root.
+- **The model never writes data with SQL.** Bookings, cancellations, holds, and payments go through service-layer tool functions with parameterized queries, as stated above.
+- **If we add a plain-English query feature** (model writes its own SQL), it must:
+- connect only as `druid_llm_ro`
+- give the model the schema of the views only (table names, column names, types, nullability), never row data or connection strings
+- validate in C# before running: one statement only, must start with SELECT, reject DROP, DELETE, UPDATE, INSERT, ALTER, TRUNCATE, CREATE, EXEC, EXECUTE, GRANT, REVOKE, INTO OUTFILE, comments (`--`, `/*`, `#`), and `;`. Match whole keywords so columns like `created_at` and `updated_at` aren't blocked
+- cap results at 50 rows
+- have a system prompt that says: get the schema first, SELECT only, never attempt writes, explain results in plain language
+- This feature is a scope change and needs team and Mr. Rogers approval before it's built.
+- **Errors:** catch database errors and return `{ "message": "..." }`. Never expose stack traces, SQL text, or connection details to the client or the model.
+- **Defense in depth:** database permissions are the real protection; code validation and prompt rules are backup layers. Don't rely on any single layer.
 
 ### AI Concierge — planned features
 
