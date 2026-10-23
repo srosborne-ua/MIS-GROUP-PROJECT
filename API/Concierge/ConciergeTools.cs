@@ -13,15 +13,21 @@ public interface IConciergeTool
     Task<object> Run(IReadOnlyDictionary<string, JsonElement> input, string page);
 }
 
-// Tool registry. Empty for now: the concierge only answers questions and
-// redirects booking/availability requests to the booking page.
+// Thrown by a tool for a failure the model should see. The message is sent to the
+// model as-is, so it must never include SQL, stack traces, or connection details.
+public class ConciergeToolException(string message) : Exception(message);
+
+// Tool registry. The knowledge tools (KnowledgeTools.cs) are registered when
+// DB_LLM_RO_CONNECTION is set; otherwise it is empty and the concierge answers from
+// hotel-info.json in its prompt.
 //
-// To add a tool later (e.g. check_availability, create_booking), implement
-// IConciergeTool and register it in Program.cs:
+// To add a tool, implement IConciergeTool and register it in Program.cs:
 //     builder.Services.AddSingleton<IConciergeTool, CheckAvailabilityTool>();
 // ConciergeService already sends the definitions to the API and runs the tool loop.
-public class ConciergeTools(IEnumerable<IConciergeTool> tools)
+public class ConciergeTools(IEnumerable<IConciergeTool> tools, ILogger<ConciergeTools> logger)
 {
+    private const string ToolFailed = "That lookup isn't available right now.";
+
     private readonly List<IConciergeTool> _tools = tools.ToList();
 
     public List<BetaToolUnion> Definitions() => _tools.Select(t => (BetaToolUnion)t.Definition).ToList();
@@ -34,9 +40,16 @@ public class ConciergeTools(IEnumerable<IConciergeTool> tools)
         {
             return (JsonSerializer.Serialize(await tool.Run(input, page)), false);
         }
+        catch (ConciergeToolException ex)
+        {
+            return (ex.Message, true);
+        }
         catch (Exception ex)
         {
-            return ("Tool failed: " + ex.Message, true);
+            // Database and other failures: log the type only (exception messages can carry
+            // SQL or server details) and give the model a generic message.
+            logger.LogError("Concierge tool {Tool} failed: {Type}", name, ex.GetType().Name);
+            return (ToolFailed, true);
         }
     }
 }

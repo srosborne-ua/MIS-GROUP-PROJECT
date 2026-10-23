@@ -236,3 +236,18 @@ CREATE TABLE event_block_room (
     CONSTRAINT fk_event_block_room_block FOREIGN KEY (event_block_id) REFERENCES event_block (id) ON DELETE CASCADE,
     CONSTRAINT fk_event_block_room_room FOREIGN KEY (room_id) REFERENCES room (id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Hotel reference documents the Druid AI Assistant searches to answer guest
+-- questions (RAG). Facts come from API/Concierge/hotel-info.json; anything not yet
+-- confirmed by Mr. Rogers is written as TODO, and the concierge treats it as unknown.
+CREATE TABLE knowledge_document (
+    id       INT NOT NULL AUTO_INCREMENT,
+    title    VARCHAR(255) NOT NULL,
+    content  TEXT NOT NULL,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- The only object druid_llm_ro can read (see create-llm-ro-user.sql). The concierge's
+-- model-written SELECTs run against this view, never against tables.
+CREATE SQL SECURITY DEFINER VIEW v_knowledge_documents AS
+    SELECT id, title, content FROM knowledge_document;

@@ -20,7 +20,7 @@ public class ConciergeService(ConciergePrompt prompt, ConciergeTools tools)
     public const int MaxHistory = 10;          // rolling window of messages sent to the model
     private const int MaxMessageChars = 2000;  // per message
     private const int MaxTokens = 2048;        // short chat replies; includes thinking
-    private const int MaxToolTurns = 4;        // safety cap once tools exist
+    private const int MaxToolTurns = 5;        // a knowledge lookup takes two tool turns plus the answer
 
     public static readonly string Model = Environment.GetEnvironmentVariable("CONCIERGE_MODEL") is { Length: > 0 } m
         ? m
@@ -76,9 +76,11 @@ public class ConciergeService(ConciergePrompt prompt, ConciergeTools tools)
         var system = prompt.Build(page).Select(text => new BetaTextBlockParam { Text = text }).ToList();
         var toolDefinitions = tools.Definitions();
         var conversation = new List<BetaMessageParam>(messages);
+        var shownText = false;  // text already sent in an earlier turn of this reply
 
         for (var turn = 0; turn < MaxToolTurns; turn++)
         {
+            var turnText = false;
             var parameters = new MessageCreateParams
             {
                 Model = Model,
@@ -97,10 +99,14 @@ public class ConciergeService(ConciergePrompt prompt, ConciergeTools tools)
             {
                 if (rawEvent.TryPickContentBlockStart(out var start) && start.ContentBlock.TryPickBetaFallback(out _))
                 {
+                    shownText = turnText = false;
                     await onReset();
                 }
                 else if (rawEvent.TryPickContentBlockDelta(out var delta) && delta.Delta.TryPickText(out var text))
                 {
+                    // Separate text from different turns (before and after a tool call).
+                    if (shownText && !turnText) await onText("\n\n");
+                    shownText = turnText = true;
                     await onText(text.Text);
                 }
             }
