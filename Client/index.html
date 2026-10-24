@@ -336,7 +336,7 @@
         <div class="container page-head page-head--compact">
             <p class="eyebrow">Front desk</p>
             <h1 id="staff-title" class="display display--sm" tabindex="-1">Staff Portal</h1>
-            <p class="fine-print">Sprint 1 prototype: no sign-in yet, and all data is sample data saved in this browser.
+            <p class="fine-print">No staff sign-in yet.
                 <button type="button" class="btn-text" data-action="reset-demo">Reset sample data</button></p>
         </div>
 
@@ -384,6 +384,11 @@
 
                 <p id="res-count" class="status-line" role="status" aria-live="polite"></p>
                 <div id="res-table"></div>
+                <nav id="res-pager" class="pager" aria-label="Reservation pages" hidden>
+                    <button type="button" class="btn btn--ghost" data-page="prev">Previous</button>
+                    <p id="res-page" class="status-line"></p>
+                    <button type="button" class="btn btn--ghost" data-page="next">Next</button>
+                </nav>
             </div>
 
             <!-- New reservation -->

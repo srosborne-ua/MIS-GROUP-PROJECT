@@ -476,6 +476,17 @@ input[type="checkbox"] {
 
 .inline-actions .hint { margin: 0; }
 
+.pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 1.5rem;
+}
+
+.pager .status-line { margin: 0; min-height: 0; }
+.pager .btn:disabled { cursor: not-allowed; }
+
 .notice {
     padding: 1rem 0 1rem 1rem;
     border-left: 2px solid var(--accent);

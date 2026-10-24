@@ -113,7 +113,7 @@ Reached from a footer link. It covers every staff requirement from the client:
 
 | Route | What staff can do |
 | --- | --- |
-| `#/staff/reservations` | View customer info and payment status (paid / not paid), cancel reservations, send guest messages |
+| `#/staff/reservations` | View customer info and payment status (paid / not paid), edit guest details, cancel reservations, send guest messages |
 | `#/staff/new` | Create a reservation |
 | `#/staff/rooms` | See the nightly room board; place and release holds on individual rooms |
 | `#/staff/events` | Block off groups of rooms for events |
@@ -142,7 +142,7 @@ The browser talks only to our API; it never calls Anthropic or a database direct
 | Resource | Endpoints |
 | --- | --- |
 | Rooms | `GET api/rooms/types`, `GET api/rooms`, `GET api/rooms/availability`, `GET api/rooms/{number}/check`, `GET api/rooms/board`, `GET api/rooms/{number}/schedule` |
-| Reservations | `GET api/reservations`, `GET api/reservations/{id}`, `POST api/reservations`, `POST api/reservations/{id}/cancel`, `PUT api/reservations/{id}/payment-status`, `POST api/reservations/{id}/messages` |
+| Reservations | `GET api/reservations` (filtered and paged: `status`, `payment`, `q`, `page`), `GET api/reservations/stats`, `GET api/reservations/{id}`, `PUT api/reservations/{id}/guest`, `POST api/reservations`, `POST api/reservations/{id}/cancel`, `PUT api/reservations/{id}/payment-status`, `POST api/reservations/{id}/messages` |
 | Holds | `GET api/holds`, `POST api/holds`, `DELETE api/holds/{id}` |
 | Event blocks | `GET api/blocks`, `POST api/blocks`, `DELETE api/blocks/{id}` |
 | Rates | `GET api/rates`, `PUT api/rates`, `POST api/rates/overrides`, `DELETE api/rates/overrides/{date}`, `GET api/rates/preview` |
@@ -275,3 +275,4 @@ The validator is also checked directly against queries such as DROP/INSERT/UPDAT
 **Content added later**
 
 28. **Restaurant and bar:** the home page describes a restaurant and bar off the lobby. Mr. Rogers to confirm the hotel has one, and to supply its name, hours, and whether it serves breakfast.
+29. **Editing reservations:** staff can change a reservation's guest name, phone, guest count, and requests. Dates, room, and email can't be edited; changing those means cancelling and rebooking, so the price is always the one quoted at booking. Mr. Rogers to confirm that's enough for the front desk.

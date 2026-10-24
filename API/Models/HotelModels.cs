@@ -63,6 +63,12 @@ public class Reservation
     public List<GuestMessage> Messages { get; set; } = [];
 }
 
+// One page of the staff reservation list. Items leave Nights and Messages empty;
+// GET api/reservations/{id} has the full reservation.
+public record ReservationPage(List<Reservation> Items, int Total, int Page, int PageSize);
+
+public record ReservationStats(int Arrivals, int InHouse, decimal Outstanding);
+
 // Holds and blocks store an inclusive last night in End.
 public record Hold(string Id, int Room, DateOnly Start, DateOnly End, string Reason, DateTime CreatedAt);
 
@@ -111,6 +117,26 @@ public class CreateReservationRequest
     public string? PaymentStatus { get; set; }
     public bool CardOnFile { get; set; }
     public string? Source { get; set; }
+}
+
+// Staff reservation list filters. Status: upcoming, past, cancelled, or all.
+// Payment: paid, unpaid, or any.
+public class ReservationListQuery
+{
+    public string? Status { get; set; }
+    public string? Payment { get; set; }
+    public string? Q { get; set; }
+    public int? Page { get; set; }
+}
+
+// The email stays as booked, since it links the booking to its guest record.
+public class UpdateGuestDetailsRequest
+{
+    public string? FirstName { get; set; }
+    public string? LastName { get; set; }
+    public string? Phone { get; set; }
+    public string? Requests { get; set; }
+    public int? Guests { get; set; }
 }
 
 public class PaymentStatusRequest

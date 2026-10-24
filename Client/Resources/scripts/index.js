@@ -229,8 +229,27 @@
             return request('/rooms/' + seg(number) + '/check' + toQuery({ checkin: checkin || '', checkout: checkout || '' }));
         },
 
-        getReservations() { return request('/reservations'); },
+        // One page of reservations ({ items, total, page, pageSize }), filtered on the
+        // server. List items leave out nights and messages; getReservation has them.
+        getReservations(filters) {
+            const f = filters || {};
+            return request('/reservations' + toQuery({ status: f.status || 'all', payment: f.payment || 'any', q: f.q || '', page: f.page || 1 }));
+        },
+        getReservationStats() { return request('/reservations/stats'); },
         getReservation(resId) { return request('/reservations/' + seg(resId)); },
+
+        updateGuestDetails(resId, input) {
+            return request('/reservations/' + seg(resId) + '/guest', {
+                method: 'PUT',
+                body: {
+                    firstName: String(input.firstName || ''),
+                    lastName: String(input.lastName || ''),
+                    phone: String(input.phone || ''),
+                    requests: String(input.requests || ''),
+                    guests: Number(input.guests) || null
+                }
+            });
+        },
 
         // Card details are validated in the browser and discarded. The API only
         // ever receives whether payment was taken and the card-on-file opt-in.
@@ -926,18 +945,46 @@
         });
 
         // Reservations
-        $('#res-filters').addEventListener('input', () => renderReservationTable());
+        $('#res-filters').addEventListener('input', () => {
+            resPage = 1;
+            renderReservationTable();
+        });
         $('#res-filters').addEventListener('submit', (e) => e.preventDefault());
+        $('#res-pager').addEventListener('click', async (e) => {
+            const button = e.target.closest('[data-page]');
+            if (!button) return;
+            resPage += button.dataset.page === 'next' ? 1 : -1;
+            await renderReservationTable();
+            if (button.disabled) {
+                const other = $('#res-pager [data-page]:not(:disabled)');
+                if (other) other.focus();
+            }
+        });
         $('#res-detail').addEventListener('click', async (e) => {
             const button = e.target.closest('[data-action]');
             if (!button) return;
             const id = button.dataset.id;
-            if (button.dataset.action === 'cancel') {
-                if (!window.confirm('Cancel reservation ' + id + '? The room will be released.')) return;
-                await api.cancelReservation(id);
+            const editForm = $('#res-detail [data-form="guest"]');
+            if (button.dataset.action === 'edit-guest') {
+                editForm.hidden = false;
+                editForm.firstName.focus();
+                return;
             }
-            if (button.dataset.action === 'toggle-paid') {
-                await api.setPaymentStatus(id, button.dataset.next);
+            if (button.dataset.action === 'close-edit') {
+                editForm.hidden = true;
+                $('#res-detail [data-action="edit-guest"]').focus();
+                return;
+            }
+            try {
+                if (button.dataset.action === 'cancel') {
+                    if (!window.confirm('Cancel reservation ' + id + '? The room will be released.')) return;
+                    await api.cancelReservation(id);
+                }
+                if (button.dataset.action === 'toggle-paid') {
+                    await api.setPaymentStatus(id, button.dataset.next);
+                }
+            } catch (err) {
+                window.alert(err.message);
             }
             await renderReservationsPanel(id);
             const again = $('#res-detail [data-action="' + button.dataset.action + '"]');
@@ -946,6 +993,10 @@
         $('#res-detail').addEventListener('submit', async (e) => {
             e.preventDefault();
             const form = e.target;
+            if (form.dataset.form === 'guest') {
+                await saveGuestDetails(form);
+                return;
+            }
             try {
                 await api.sendGuestMessage(form.dataset.id, form.message.value);
                 await renderReservationsPanel(form.dataset.id);
@@ -1123,19 +1174,13 @@
     }
 
     async function renderReservationsPanel(id) {
-        const t = todayISO();
-        const all = await api.getReservations();
-        const board = await api.getRoomBoard(t);
-        const active = all.filter((r) => r.status === 'confirmed');
-        const arrivals = active.filter((r) => r.checkin === t).length;
-        const inHouse = active.filter((r) => r.checkin <= t && r.checkout > t).length;
+        const [stats, board] = await Promise.all([api.getReservationStats(), api.getRoomBoard(todayISO())]);
         const open = board.filter((r) => r.status === 'available').length;
-        const outstanding = active.filter((r) => r.paymentStatus === 'unpaid' && r.checkout > t).reduce((s, r) => s + r.total, 0);
         $('#staff-stats').innerHTML =
-            '<div><dt>Arrivals today</dt><dd>' + arrivals + '</dd></div>' +
-            '<div><dt>In house tonight</dt><dd>' + inHouse + '</dd></div>' +
+            '<div><dt>Arrivals today</dt><dd>' + stats.arrivals + '</dd></div>' +
+            '<div><dt>In house tonight</dt><dd>' + stats.inHouse + '</dd></div>' +
             '<div><dt>Open tonight</dt><dd>' + open + ' of ' + board.length + '</dd></div>' +
-            '<div><dt>Not yet paid</dt><dd>' + money(outstanding) + '</dd></div>';
+            '<div><dt>Not yet paid</dt><dd>' + money(stats.outstanding) + '</dd></div>';
 
         await renderReservationDetail(id);
         await renderReservationTable();
@@ -1154,6 +1199,9 @@
         const t = ROOM_TYPES[r.type];
         const g = r.guest;
         const canCancel = r.status === 'confirmed' && r.checkout > todayISO();
+        const canEdit = r.status === 'confirmed';
+        const guestOptions = Array.from({ length: Math.max(t.sleeps, r.guests) }, (_, i) => i + 1).map((n) =>
+            '<option value="' + n + '"' + (n === r.guests ? ' selected' : '') + '>' + n + '</option>').join('');
         const messages = r.messages.slice().reverse().map((m) =>
             '<li><p class="message__meta">' + esc(fmtTimestamp(m.at)) + ' · ' + (m.from === 'staff' ? 'Front desk' : 'Automatic') + '</p>' +
             '<p>' + esc(m.text) + '</p></li>').join('');
@@ -1185,8 +1233,32 @@
                 '<div class="inline-actions">' +
                     '<button type="button" class="btn btn--ghost" data-action="toggle-paid" data-id="' + esc(r.id) + '" data-next="' + (r.paymentStatus === 'paid' ? 'unpaid' : 'paid') + '">' +
                         (r.paymentStatus === 'paid' ? 'Mark as not paid' : 'Mark as paid') + '</button>' +
+                    (canEdit ? '<button type="button" class="btn btn--ghost" data-action="edit-guest" data-id="' + esc(r.id) + '">Edit guest details</button>' : '') +
                     (canCancel ? '<button type="button" class="btn btn--danger" data-action="cancel" data-id="' + esc(r.id) + '">Cancel reservation</button>' : '') +
                 '</div>' +
+                (canEdit
+                    ? '<form class="staff-form section-gap" data-form="guest" data-id="' + esc(r.id) + '" aria-labelledby="eg-title" novalidate hidden>' +
+                        '<h4 id="eg-title" class="label-heading">Edit guest details</h4>' +
+                        '<div class="grid-2">' +
+                            '<div class="field"><label for="eg-first">First name</label>' +
+                                '<input type="text" id="eg-first" name="firstName" value="' + esc(g.firstName) + '" required></div>' +
+                            '<div class="field"><label for="eg-last">Last name</label>' +
+                                '<input type="text" id="eg-last" name="lastName" value="' + esc(g.lastName) + '" required></div>' +
+                            '<div class="field"><label for="eg-phone">Phone</label>' +
+                                '<input type="tel" id="eg-phone" name="phone" value="' + esc(g.phone) + '" required></div>' +
+                            '<div class="field"><label for="eg-guests">Guests</label>' +
+                                '<select id="eg-guests" name="guests">' + guestOptions + '</select></div>' +
+                        '</div>' +
+                        '<div class="field"><label for="eg-requests">Requests <span class="optional">Optional</span></label>' +
+                            '<textarea id="eg-requests" name="requests" rows="2">' + esc(g.requests) + '</textarea></div>' +
+                        '<p class="fine-print">Email, dates, and room stay as booked. To change those, cancel and rebook.</p>' +
+                        '<div class="inline-actions">' +
+                            '<button type="submit" class="btn">Save changes</button>' +
+                            '<button type="button" class="btn-text" data-action="close-edit">Discard</button>' +
+                        '</div>' +
+                        '<p class="notice" role="alert" hidden></p>' +
+                    '</form>'
+                    : '') +
                 '<h4 class="label-heading section-gap">Guest messages</h4>' +
                 '<form class="message-form" data-id="' + esc(r.id) + '" novalidate>' +
                     '<div class="field">' +
@@ -1200,23 +1272,63 @@
             '</article>';
     }
 
+    async function saveGuestDetails(form) {
+        const message = $('.notice', form);
+        showNotice(message, '');
+        const ok = validate([
+            [form.firstName, required('Enter a first name.')],
+            [form.lastName, required('Enter a last name.')],
+            [form.phone, isPhone]
+        ]);
+        if (!ok) return;
+        try {
+            await api.updateGuestDetails(form.dataset.id, {
+                firstName: form.firstName.value,
+                lastName: form.lastName.value,
+                phone: form.phone.value,
+                requests: form.requests.value,
+                guests: form.guests.value
+            });
+        } catch (err) {
+            showNotice(message, err.message);
+            return;
+        }
+        await renderReservationsPanel(form.dataset.id);
+        $('#res-detail h3').focus();
+    }
+
+    // Filtering and paging happen on the server. Typing in the search box can start
+    // several requests; only the newest one is drawn.
+    let resPage = 1;
+    let resRequest = 0;
+
     async function renderReservationTable() {
         const f = $('#res-filters');
-        const q = f.q.value.trim().toLowerCase();
-        const t = todayISO();
-        const list = (await api.getReservations()).filter((r) => {
-            if (f.status.value === 'upcoming' && !(r.status === 'confirmed' && r.checkout > t)) return false;
-            if (f.status.value === 'past' && !(r.status === 'confirmed' && r.checkout <= t)) return false;
-            if (f.status.value === 'cancelled' && r.status !== 'cancelled') return false;
-            if (f.payment.value !== 'any' && r.paymentStatus !== f.payment.value) return false;
-            if (q) {
-                const hay = [r.id, r.room, r.guest.firstName, r.guest.lastName, r.guest.email].join(' ').toLowerCase();
-                if (!hay.includes(q)) return false;
-            }
-            return true;
-        }).sort((a, b) => a.checkin.localeCompare(b.checkin) || a.room - b.room);
+        const pager = $('#res-pager');
+        const ticket = ++resRequest;
+        let result;
+        try {
+            result = await api.getReservations({ status: f.status.value, payment: f.payment.value, q: f.q.value.trim(), page: resPage });
+        } catch (err) {
+            if (ticket !== resRequest) return;
+            $('#res-count').textContent = '';
+            $('#res-table').innerHTML = '<p class="notice">' + esc(err.message) + '</p>';
+            pager.hidden = true;
+            return;
+        }
+        if (ticket !== resRequest) return;
 
-        $('#res-count').textContent = plural(list.length, 'reservation');
+        const list = result.items;
+        const pages = Math.max(1, Math.ceil(result.total / result.pageSize));
+        resPage = result.page;
+        const first = (result.page - 1) * result.pageSize + 1;
+        $('#res-count').textContent = pages > 1
+            ? 'Showing ' + first + '–' + (first + list.length - 1) + ' of ' + plural(result.total, 'reservation')
+            : plural(result.total, 'reservation');
+        pager.hidden = pages <= 1;
+        $('#res-page').textContent = 'Page ' + result.page + ' of ' + pages;
+        $('[data-page="prev"]', pager).disabled = result.page <= 1;
+        $('[data-page="next"]', pager).disabled = result.page >= pages;
         if (!list.length) {
             $('#res-table').innerHTML = '<p class="empty">No reservations match.</p>';
             return;

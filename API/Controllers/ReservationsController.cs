@@ -8,9 +8,13 @@ namespace API.Controllers;
 [Route("api/reservations")]
 public class ReservationsController(HotelStore store) : ControllerBase
 {
-    // GET api/reservations
+    // GET api/reservations?status=upcoming&payment=any&q=smith&page=1
     [HttpGet]
-    public Task<List<Reservation>> GetReservations() => store.GetReservationsAsync();
+    public Task<ReservationPage> GetReservations([FromQuery] ReservationListQuery query) => store.ListReservationsAsync(query);
+
+    // GET api/reservations/stats
+    [HttpGet("stats")]
+    public Task<ReservationStats> GetStats() => store.GetReservationStatsAsync();
 
     // GET api/reservations/DC-1042
     [HttpGet("{id}")]
@@ -24,6 +28,10 @@ public class ReservationsController(HotelStore store) : ControllerBase
     // POST api/reservations/DC-1042/cancel
     [HttpPost("{id}/cancel")]
     public Task<Reservation> CancelReservation(string id) => store.CancelReservationAsync(id);
+
+    // PUT api/reservations/DC-1042/guest
+    [HttpPut("{id}/guest")]
+    public Task<Reservation> UpdateGuestDetails(string id, UpdateGuestDetailsRequest input) => store.UpdateGuestDetailsAsync(id, input);
 
     // PUT api/reservations/DC-1042/payment-status
     [HttpPut("{id}/payment-status")]

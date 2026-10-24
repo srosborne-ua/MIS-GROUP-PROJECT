@@ -259,10 +259,63 @@ public class HotelStore(Db db)
 
     /* ---------- Reservations ---------- */
 
-    public async Task<List<Reservation>> GetReservationsAsync()
+    // The staff list, filtered and paged in SQL so it never loads every booking.
+    public async Task<ReservationPage> ListReservationsAsync(ReservationListQuery query)
+    {
+        const int pageSize = 25;
+        var filters = new List<string> { "r.hotel_id = @HotelId" };
+        switch (query.Status)
+        {
+            case null or "" or "all": break;
+            case "upcoming": filters.Add("b.status = 'confirmed' AND b.check_out > @Today"); break;
+            case "past": filters.Add("b.status = 'confirmed' AND b.check_out <= @Today"); break;
+            case "cancelled": filters.Add("b.status = 'cancelled'"); break;
+            default: throw new HotelRuleException("Choose which reservations to show.");
+        }
+        switch (query.Payment)
+        {
+            case null or "" or "any": break;
+            case "paid" or "unpaid": filters.Add("COALESCE(p.status, 'unpaid') = @Payment"); break;
+            default: throw new HotelRuleException("Choose a payment status.");
+        }
+        var q = (query.Q ?? "").Trim();
+        if (q.Length > 100) throw new HotelRuleException("Keep searches under 100 characters.");
+        if (q.Length > 0)
+            filters.Add("""
+                (CONCAT('DC-', b.id) LIKE @Like OR CAST(r.room_number AS CHAR) LIKE @Like
+                 OR CONCAT(b.guest_first_name, ' ', b.guest_last_name) LIKE @Like OR g.email LIKE @Like)
+                """);
+
+        var where = " WHERE " + string.Join(" AND ", filters);
+        var like = "%" + q.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+        await using var conn = await db.OpenAsync();
+        var total = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) " + BookingFrom + where,
+            new { Db.HotelId, Today = Today(), query.Payment, Like = like });
+        var lastPage = Math.Max(1, (total + pageSize - 1) / pageSize);
+        var page = Math.Clamp(query.Page ?? 1, 1, lastPage);
+        var rows = await conn.QueryAsync<BookingRow>(
+            BookingSelect + where + " ORDER BY b.check_in, r.room_number, b.id LIMIT @Take OFFSET @Skip",
+            new { Db.HotelId, Today = Today(), query.Payment, Like = like, Take = pageSize, Skip = (page - 1) * pageSize });
+        return new ReservationPage(rows.Select(ToReservation).ToList(), total, page, pageSize);
+    }
+
+    // Front desk figures for today, from confirmed bookings that haven't checked out.
+    public async Task<ReservationStats> GetReservationStatsAsync()
     {
         await using var conn = await db.OpenAsync();
-        return await LoadReservationsAsync(conn, null);
+        var row = await conn.QuerySingleAsync<StatsRow>(
+            """
+            SELECT CAST(COALESCE(SUM(b.check_in = @Today), 0) AS SIGNED) AS arrivals,
+                   CAST(COALESCE(SUM(b.check_in <= @Today), 0) AS SIGNED) AS in_house,
+                   COALESCE(SUM(CASE WHEN COALESCE(p.status, 'unpaid') = 'unpaid' THEN b.total ELSE 0 END), 0) AS outstanding
+            FROM booking b
+            JOIN room r ON r.id = b.room_id
+            LEFT JOIN payment p ON p.booking_id = b.id
+            WHERE r.hotel_id = @HotelId AND b.status = 'confirmed' AND b.check_out > @Today
+            """,
+            new { Db.HotelId, Today = Today() });
+        return new ReservationStats((int)row.Arrivals, (int)row.InHouse, row.Outstanding);
     }
 
     public async Task<Reservation> GetReservationAsync(string id)
@@ -270,7 +323,7 @@ public class HotelStore(Db db)
         var notFound = "We couldn’t find reservation " + id + ".";
         var bookingId = ParseId(ReservationPrefix, id) ?? throw new HotelRuleException(notFound, notFound: true);
         await using var conn = await db.OpenAsync();
-        return (await LoadReservationsAsync(conn, bookingId)).FirstOrDefault()
+        return await LoadReservationAsync(conn, bookingId)
             ?? throw new HotelRuleException(notFound, notFound: true);
     }
 
@@ -351,28 +404,62 @@ public class HotelStore(Db db)
             "Pre-arrival note (parking, directions, check-in time) scheduled for " + FormatDate(reminder) + ".", now);
 
         await tx.CommitAsync();
-        return (await LoadReservationsAsync(conn, bookingId)).Single();
+        return (await LoadReservationAsync(conn, bookingId))!;
     }
 
     public async Task<Reservation> CancelReservationAsync(string id)
     {
         await using var conn = await db.OpenAsync();
         await using var tx = await conn.BeginTransactionAsync();
-        var bookingId = await LockReservationAsync(conn, tx, id);
+        var booking = await LockReservationAsync(conn, tx, id);
+        var alreadyCancelled = new HotelRuleException("Reservation " + ReservationPrefix + booking.Id + " is already cancelled.");
+        if (booking.Status == "cancelled") throw alreadyCancelled;
         var now = DateTime.UtcNow;
-        await conn.ExecuteAsync(
-            "UPDATE booking SET status = 'cancelled', cancelled_at = COALESCE(cancelled_at, @Now) WHERE id = @Id",
-            new { Id = bookingId, Now = now }, tx);
-        await AddMessageAsync(conn, tx, bookingId, "system", "Reservation cancelled. Cancellation notice emailed to guest.", now);
+        var changed = await conn.ExecuteAsync(
+            "UPDATE booking SET status = 'cancelled', cancelled_at = @Now WHERE id = @Id AND status = 'confirmed'",
+            new { booking.Id, Now = now }, tx);
+        if (changed == 0) throw alreadyCancelled;
+        await AddMessageAsync(conn, tx, booking.Id, "system", "Reservation cancelled. Cancellation notice emailed to guest.", now);
         await tx.CommitAsync();
-        return (await LoadReservationsAsync(conn, bookingId)).Single();
+        return (await LoadReservationAsync(conn, booking.Id))!;
+    }
+
+    // Name, phone, requests, and guest count only. Dates, room, and price stay as booked,
+    // and the guest table is never rewritten (the details live on the booking).
+    public async Task<Reservation> UpdateGuestDetailsAsync(string id, UpdateGuestDetailsRequest input)
+    {
+        await using var conn = await db.OpenAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        var booking = await LockReservationAsync(conn, tx, id);
+        if (booking.Status == "cancelled") throw new HotelRuleException("Cancelled reservations can’t be edited.");
+        var guest = CheckGuest(new Guest
+        {
+            FirstName = input.FirstName ?? "",
+            LastName = input.LastName ?? "",
+            Email = booking.Email,
+            Phone = input.Phone ?? "",
+            Requests = input.Requests ?? ""
+        });
+        if (input.Guests is not > 0) throw new HotelRuleException("Choose how many guests.");
+        if (input.Guests > booking.Sleeps) throw new HotelRuleException("That room sleeps " + booking.Sleeps + ".");
+        var changed = await conn.ExecuteAsync(
+            """
+            UPDATE booking
+            SET guest_first_name = @FirstName, guest_last_name = @LastName, guest_phone = @Phone,
+                special_requests = @Requests, guest_count = @Guests
+            WHERE id = @Id
+            """,
+            new { booking.Id, guest.FirstName, guest.LastName, guest.Phone, guest.Requests, input.Guests }, tx);
+        if (changed == 0) throw new HotelRuleException("Reservation not found.", notFound: true);
+        await tx.CommitAsync();
+        return (await LoadReservationAsync(conn, booking.Id))!;
     }
 
     public async Task<Reservation> SetPaymentStatusAsync(string id, string? status)
     {
         await using var conn = await db.OpenAsync();
         await using var tx = await conn.BeginTransactionAsync();
-        var bookingId = await LockReservationAsync(conn, tx, id);
+        var bookingId = (await LockReservationAsync(conn, tx, id)).Id;
         await conn.ExecuteAsync(
             """
             UPDATE payment
@@ -383,19 +470,19 @@ public class HotelStore(Db db)
             """,
             new { Id = bookingId, Status = status == "paid" ? "paid" : "unpaid", Now = DateTime.UtcNow }, tx);
         await tx.CommitAsync();
-        return (await LoadReservationsAsync(conn, bookingId)).Single();
+        return (await LoadReservationAsync(conn, bookingId))!;
     }
 
     public async Task<Reservation> SendGuestMessageAsync(string id, string? text)
     {
         await using var conn = await db.OpenAsync();
         await using var tx = await conn.BeginTransactionAsync();
-        var bookingId = await LockReservationAsync(conn, tx, id);
+        var bookingId = (await LockReservationAsync(conn, tx, id)).Id;
         if (string.IsNullOrWhiteSpace(text)) throw new HotelRuleException("Write a message first.");
         if (text.Trim().Length > 2000) throw new HotelRuleException("Keep messages under 2,000 characters.");
         await AddMessageAsync(conn, tx, bookingId, "staff", text.Trim(), DateTime.UtcNow);
         await tx.CommitAsync();
-        return (await LoadReservationsAsync(conn, bookingId)).Single();
+        return (await LoadReservationAsync(conn, bookingId))!;
     }
 
     /* ---------- Holds and event blocks ---------- */
@@ -636,12 +723,21 @@ public class HotelStore(Db db)
         (await conn.QueryAsync<RoomRow>(RoomSelect + " AND r.room_number IN @Numbers ORDER BY r.room_number FOR UPDATE OF r",
             new { Db.HotelId, Numbers = numbers.ToArray() }, tx)).ToList();
 
-    private static async Task<int> LockReservationAsync(MySqlConnection conn, MySqlTransaction tx, string id)
+    // Locks the booking row until the transaction ends.
+    private static async Task<LockedBooking> LockReservationAsync(MySqlConnection conn, MySqlTransaction tx, string id)
     {
         var notFound = new HotelRuleException("Reservation not found.", notFound: true);
         var bookingId = ParseId(ReservationPrefix, id) ?? throw notFound;
-        return await conn.ExecuteScalarAsync<int?>("SELECT id FROM booking WHERE id = @Id FOR UPDATE", new { Id = bookingId }, tx)
-            ?? throw notFound;
+        return await conn.QuerySingleOrDefaultAsync<LockedBooking>(
+            """
+            SELECT b.id, b.status, g.email, t.sleeps
+            FROM booking b
+            JOIN guest g ON g.id = b.guest_id
+            JOIN room_type t ON t.id = b.room_type_id
+            WHERE b.id = @Id
+            FOR UPDATE OF b
+            """,
+            new { Id = bookingId }, tx) ?? throw notFound;
     }
 
     private static Task AddMessageAsync(MySqlConnection conn, MySqlTransaction tx, int bookingId, string sender, string body, DateTime at) =>
@@ -684,57 +780,61 @@ public class HotelStore(Db db)
         _ => "Event · " + c.Text
     };
 
-    private static async Task<List<Reservation>> LoadReservationsAsync(MySqlConnection conn, int? bookingId)
-    {
-        var where = bookingId == null ? "" : " WHERE b.id = @Id";
-        var param = new { Id = bookingId };
-        var bookings = await conn.QueryAsync<BookingRow>(
-            $"""
-            SELECT b.id, r.room_number, t.code, b.check_in, b.check_out, b.guest_count, b.status, b.source,
-                   b.special_requests, b.total, b.created_at,
-                   b.guest_first_name AS first_name, b.guest_last_name AS last_name, g.email, b.guest_phone AS phone,
-                   p.status AS payment_status, p.card_on_file
-            FROM booking b
-            JOIN room r ON r.id = b.room_id
-            JOIN room_type t ON t.id = b.room_type_id
-            JOIN guest g ON g.id = b.guest_id
-            LEFT JOIN payment p ON p.booking_id = b.id{where}
-            ORDER BY b.id
-            """, param);
-        var nightWhere = bookingId == null ? "" : " WHERE booking_id = @Id";
-        var nights = (await conn.QueryAsync<NightRow>(
-            $"SELECT booking_id, night_date, amount, kind, label FROM booking_night{nightWhere} ORDER BY booking_id, night_date",
-            param)).ToLookup(n => n.BookingId);
-        var messages = (await conn.QueryAsync<MessageRow>(
-            $"SELECT booking_id, sender, body, created_at FROM booking_message{nightWhere} ORDER BY created_at, id",
-            param)).ToLookup(m => m.BookingId);
+    private const string BookingFrom = """
+        FROM booking b
+        JOIN room r ON r.id = b.room_id
+        JOIN room_type t ON t.id = b.room_type_id
+        JOIN guest g ON g.id = b.guest_id
+        LEFT JOIN payment p ON p.booking_id = b.id
+        """;
 
-        return bookings.Select(b => new Reservation
-        {
-            Id = ReservationPrefix + b.Id,
-            Room = b.RoomNumber,
-            Type = b.Code,
-            Checkin = DateOnly.FromDateTime(b.CheckIn),
-            Checkout = DateOnly.FromDateTime(b.CheckOut),
-            Guests = b.GuestCount,
-            Guest = new Guest
-            {
-                FirstName = b.FirstName,
-                LastName = b.LastName,
-                Email = b.Email,
-                Phone = b.Phone,
-                Requests = b.SpecialRequests
-            },
-            Nights = nights[b.Id].Select(n => new NightRate(DateOnly.FromDateTime(n.NightDate), n.Amount, n.Kind, n.Label)).ToList(),
-            Total = b.Total,
-            PaymentStatus = b.PaymentStatus ?? "unpaid",
-            CardOnFile = b.CardOnFile ?? false,
-            Source = b.Source,
-            Status = b.Status,
-            CreatedAt = b.CreatedAt,
-            Messages = messages[b.Id].Select(m => new GuestMessage(m.CreatedAt, m.Sender, m.Body)).ToList()
-        }).ToList();
+    private const string BookingSelect = """
+        SELECT b.id, r.room_number, t.code, b.check_in, b.check_out, b.guest_count, b.status, b.source,
+               b.special_requests, b.total, b.created_at,
+               b.guest_first_name AS first_name, b.guest_last_name AS last_name, g.email, b.guest_phone AS phone,
+               p.status AS payment_status, p.card_on_file
+        """ + "\n" + BookingFrom;
+
+    // One reservation with its nightly rates and messages, or null if there's no such booking.
+    private static async Task<Reservation?> LoadReservationAsync(MySqlConnection conn, int bookingId)
+    {
+        var param = new { Id = bookingId };
+        var booking = await conn.QuerySingleOrDefaultAsync<BookingRow>(BookingSelect + " WHERE b.id = @Id", param);
+        if (booking == null) return null;
+        var reservation = ToReservation(booking);
+        reservation.Nights = (await conn.QueryAsync<NightRow>(
+            "SELECT booking_id, night_date, amount, kind, label FROM booking_night WHERE booking_id = @Id ORDER BY night_date",
+            param)).Select(n => new NightRate(DateOnly.FromDateTime(n.NightDate), n.Amount, n.Kind, n.Label)).ToList();
+        reservation.Messages = (await conn.QueryAsync<MessageRow>(
+            "SELECT booking_id, sender, body, created_at FROM booking_message WHERE booking_id = @Id ORDER BY created_at, id",
+            param)).Select(m => new GuestMessage(m.CreatedAt, m.Sender, m.Body)).ToList();
+        return reservation;
     }
+
+    // Without nights or messages; LoadReservationAsync adds those.
+    private static Reservation ToReservation(BookingRow b) => new()
+    {
+        Id = ReservationPrefix + b.Id,
+        Room = b.RoomNumber,
+        Type = b.Code,
+        Checkin = DateOnly.FromDateTime(b.CheckIn),
+        Checkout = DateOnly.FromDateTime(b.CheckOut),
+        Guests = b.GuestCount,
+        Guest = new Guest
+        {
+            FirstName = b.FirstName,
+            LastName = b.LastName,
+            Email = b.Email,
+            Phone = b.Phone,
+            Requests = b.SpecialRequests
+        },
+        Total = b.Total,
+        PaymentStatus = b.PaymentStatus ?? "unpaid",
+        CardOnFile = b.CardOnFile ?? false,
+        Source = b.Source,
+        Status = b.Status,
+        CreatedAt = b.CreatedAt
+    };
 
     // Nightly prices for a date range: room type rates plus any special rates.
     private sealed class RateBook(Dictionary<string, RoomTypeRow> types, List<SeasonalRow> seasonal)
@@ -862,6 +962,21 @@ public class HotelStore(Db db)
         public string Phone { get; set; } = "";
         public string? PaymentStatus { get; set; }
         public bool? CardOnFile { get; set; }
+    }
+
+    private class LockedBooking
+    {
+        public int Id { get; set; }
+        public string Status { get; set; } = "";
+        public string Email { get; set; } = "";
+        public int Sleeps { get; set; }
+    }
+
+    private class StatsRow
+    {
+        public long Arrivals { get; set; }
+        public long InHouse { get; set; }
+        public decimal Outstanding { get; set; }
     }
 
     private class NightRow
