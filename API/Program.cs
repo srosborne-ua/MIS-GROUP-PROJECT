@@ -32,7 +32,9 @@ builder.Services.AddSingleton<HotelStore>();
 
 // Druid AI Assistant (POST api/concierge). Register concierge tools here as
 // IConciergeTool singletons once they are approved.
-// Knowledge base (RAG): read-only lookups as druid_llm_ro, only when DB_LLM_RO_CONNECTION is set.
+// Availability and prices through HotelStore, the same search the booking page uses.
+builder.Services.AddSingleton<IConciergeTool, CheckAvailabilityTool>();
+// Database lookups (RAG): read-only SELECTs as druid_llm_ro, only when DB_LLM_RO_CONNECTION is set.
 builder.Services.AddSingleton<ReadOnlyDb>();
 if (ReadOnlyDb.IsConfigured)
 {

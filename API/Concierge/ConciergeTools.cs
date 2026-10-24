@@ -17,9 +17,9 @@ public interface IConciergeTool
 // model as-is, so it must never include SQL, stack traces, or connection details.
 public class ConciergeToolException(string message) : Exception(message);
 
-// Tool registry. The knowledge tools (KnowledgeTools.cs) are registered when
-// DB_LLM_RO_CONNECTION is set; otherwise it is empty and the concierge answers from
-// hotel-info.json in its prompt.
+// Tool registry. check_availability (AvailabilityTool.cs) is always registered; the
+// database query tools (KnowledgeTools.cs) are registered when DB_LLM_RO_CONNECTION is
+// set; otherwise the concierge answers hotel facts from hotel-info.json in its prompt.
 //
 // To add a tool, implement IConciergeTool and register it in Program.cs:
 //     builder.Services.AddSingleton<IConciergeTool, CheckAvailabilityTool>();

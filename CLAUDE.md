@@ -18,6 +18,8 @@ The long-term project is an "AI Concierge for Hospitality Bookings".
 
 **Also live:** RAG for the concierge (knowledge documents searched with model-written, validated read-only SQL as `druid_llm_ro`). Shipped ahead of Mr. Rogers' sign-off; he still needs to confirm it (README assumption 25).
 
+**Added after that:** the concierge can also query room, room-type, rate, and room-unavailability views (no guest data), and can check availability and exact prices through `HotelStore` (README assumption 27, also pending Mr. Rogers).
+
 Success definition from the client: the site should make life easy, both for guests booking and for staff managing.
 
 See [README.md](README.md) for the route table, hotel model details, and the running list of assumptions to confirm with Mr. Rogers.
@@ -55,7 +57,7 @@ API/                          ASP.NET Core Web API (.NET 10, controllers); also 
 │   ├── schema.sql            Tables (run by hand as admin)
 │   ├── seed.sql              Hotel, room types, 120 rooms (run once by hand as admin)
 │   ├── migrate-*.sql         Changes for databases built from an older schema.sql (run by hand as admin)
-│   ├── create-llm-ro-user.sql   Creates druid_llm_ro (SELECT on v_knowledge_documents only)
+│   ├── create-llm-ro-user.sql   Creates druid_llm_ro (SELECT on the concierge v_* views only)
 │   ├── Db.cs                 Opens connections as druid_app from DB_APP_CONNECTION
 │   ├── ReadOnlyDb.cs         Opens connections as druid_llm_ro from DB_LLM_RO_CONNECTION (with time caps)
 │   └── SampleData.cs         Sample reservations, hold, and event block for "Reset sample data"
@@ -63,8 +65,9 @@ API/                          ASP.NET Core Web API (.NET 10, controllers); also 
     ├── hotel-info.json       Editable hotel facts loaded into the concierge prompt (TODOs = unknown)
     ├── ConciergePrompt.cs    Server-side system prompt (identity, scope, page context)
     ├── ConciergeService.cs   Anthropic SDK call, history window, streaming, tool loop
-    ├── ConciergeTools.cs     Tool registry (knowledge tools when DB_LLM_RO_CONNECTION is set)
-    ├── KnowledgeTools.cs     get_knowledge_schema and search_knowledge (RAG, read-only)
+    ├── ConciergeTools.cs     Tool registry (check_availability always; database tools when DB_LLM_RO_CONNECTION is set)
+    ├── AvailabilityTool.cs   check_availability (HotelStore's availability search: open rooms and exact totals)
+    ├── KnowledgeTools.cs     get_database_schema and query_database (RAG, read-only views)
     └── KnowledgeQueryValidator.cs   Checks model-written SQL before it runs
 Client/
 ├── Resources/
@@ -129,7 +132,7 @@ Client/
 ### Database Safety Rules 
 **Two database users, least privilege.**
 - `druid_app`: SELECT, INSERT, UPDATE, DELETE only. Used by the service layer. No CREATE, DROP, ALTER, or GRANT.
-- `druid_llm_ro`: SELECT only, on read-only views. Today that is `v_knowledge_documents` only; add views (for example room types or rates) one grant at a time. No access to guest, payment, or booking_message data. Connection and execution time capped. Used only by `ReadOnlyDb`.
+- `druid_llm_ro`: SELECT only, on read-only views: `v_knowledge_documents`, `v_hotel`, `v_room_types`, `v_rooms`, `v_special_rates`, `v_room_unavailable` (room number, nights, and kind only). Add views one grant at a time, and list each in `KnowledgeQueryValidator.ApprovedViews`. No access to guest, payment, booking_message, or booking data beyond those room/night rows: no names, emails, phones, booking ids, special requests, hold reasons, or event names. Connection and execution time capped. Used only by `ReadOnlyDb`.
 - Schema changes and seeding run by hand under a separate admin account. The app never connects as root.
 - **The model never writes data with SQL.** Bookings, cancellations, holds, and payments go through service-layer tool functions with parameterized queries, as stated above.
 - **If we add a plain-English query feature** (model writes its own SQL), it must:
@@ -144,10 +147,10 @@ Client/
 
 ### AI Concierge — planned features
 
-- Current state: Druid AI Assistant answers hotel and booking questions only (from `hotel-info.json`, or from the knowledge documents when `DB_LLM_RO_CONNECTION` is set), is aware of which site section the user is on (main / booking / employee portal), and is restricted to booking-related topics.
-- Planned: booking rooms directly through the concierge and checking room availability through it, via Anthropic tool use calling the site's existing booking and availability logic.
+- Current state: Druid AI Assistant answers hotel and booking questions only (from `hotel-info.json`, or from the database views when `DB_LLM_RO_CONNECTION` is set), checks availability and exact prices with `check_availability` (the same `HotelStore` search as the booking page), knows today's hotel-local date, is aware of which site section the user is on (main / booking / employee portal), and is restricted to booking-related topics.
+- Planned: booking rooms directly through the concierge, via Anthropic tool use calling the site's existing booking logic, with explicit guest confirmation.
 - Planned: in-site payment (credit card entry during booking). When it ships, update the payment flag in the hotel info file so the concierge tells guests they can pay online.
-- Until then, the concierge redirects booking and availability requests to the booking page. Keep the concierge server code (`ConciergeService` / `ConciergeTools`) structured so tools can be added without a rewrite.
+- Until then, the concierge sends guests to the booking page to book. Keep the concierge server code (`ConciergeService` / `ConciergeTools`) structured so tools can be added without a rewrite.
 
 ## Code conventions (`index.js`)
 

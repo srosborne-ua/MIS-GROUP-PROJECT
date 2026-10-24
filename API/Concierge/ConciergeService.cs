@@ -20,7 +20,8 @@ public class ConciergeService(ConciergePrompt prompt, ConciergeTools tools)
     public const int MaxHistory = 10;          // rolling window of messages sent to the model
     private const int MaxMessageChars = 2000;  // per message
     private const int MaxTokens = 2048;        // short chat replies; includes thinking
-    private const int MaxToolTurns = 5;        // a knowledge lookup takes two tool turns plus the answer
+    private const int MaxToolTurns = 8;        // schema, a query or two, availability, then the answer
+    private const int HoldBackChars = 200;     // see Run(): longer than a pre-tool note, short enough to feel instant
 
     public static readonly string Model = Environment.GetEnvironmentVariable("CONCIERGE_MODEL") is { Length: > 0 } m
         ? m
@@ -78,9 +79,24 @@ public class ConciergeService(ConciergePrompt prompt, ConciergeTools tools)
         var conversation = new List<BetaMessageParam>(messages);
         var shownText = false;  // text already sent in an earlier turn of this reply
 
+        // A turn's opening text is held back until it is clearly a reply: the model sometimes
+        // writes a short note ("Next Friday is Oct 30") before calling a tool, and that note
+        // is dropped when the tool call starts. Longer text, or a turn that ends without a
+        // tool call, is shown.
+        var pending = new System.Text.StringBuilder();
+        async Task Flush()
+        {
+            if (pending.Length == 0) return;
+            if (shownText) await onText("\n\n");  // separate text from an earlier turn
+            shownText = true;
+            await onText(pending.ToString());
+            pending.Clear();
+        }
+
         for (var turn = 0; turn < MaxToolTurns; turn++)
         {
-            var turnText = false;
+            var turnText = false;  // this turn's text is already streaming
+            pending.Clear();
             var parameters = new MessageCreateParams
             {
                 Model = Model,
@@ -100,19 +116,32 @@ public class ConciergeService(ConciergePrompt prompt, ConciergeTools tools)
                 if (rawEvent.TryPickContentBlockStart(out var start) && start.ContentBlock.TryPickBetaFallback(out _))
                 {
                     shownText = turnText = false;
+                    pending.Clear();
                     await onReset();
+                }
+                else if (rawEvent.TryPickContentBlockStart(out var toolStart) && toolStart.ContentBlock.TryPickBetaToolUse(out _))
+                {
+                    pending.Clear();
                 }
                 else if (rawEvent.TryPickContentBlockDelta(out var delta) && delta.Delta.TryPickText(out var text))
                 {
-                    // Separate text from different turns (before and after a tool call).
-                    if (shownText && !turnText) await onText("\n\n");
-                    shownText = turnText = true;
-                    await onText(text.Text);
+                    if (turnText)
+                    {
+                        await onText(text.Text);
+                        continue;
+                    }
+                    pending.Append(text.Text);
+                    if (pending.Length >= HoldBackChars)
+                    {
+                        await Flush();
+                        turnText = true;
+                    }
                 }
             }
             var message = aggregator.Message();
 
             var stopReason = message.StopReason?.Raw();
+            if (stopReason != "tool_use") await Flush();
             if (stopReason == "refusal") return ConciergeStatus.Refusal;
             if (stopReason != "tool_use") return stopReason == "max_tokens" ? ConciergeStatus.MaxTokens : ConciergeStatus.Ok;
 

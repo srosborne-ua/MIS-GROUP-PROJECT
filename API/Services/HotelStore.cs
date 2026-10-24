@@ -525,7 +525,7 @@ public class HotelStore(Db db)
     // would roll over to tomorrow around 7 PM local time.
     private static readonly TimeZoneInfo HotelTimeZone = TimeZoneInfo.FindSystemTimeZoneById("America/Chicago");
 
-    private static DateOnly Today() => DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, HotelTimeZone));
+    public static DateOnly Today() => DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, HotelTimeZone));
 
     private static DateOnly? ParseDate(string? value) =>
         DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
