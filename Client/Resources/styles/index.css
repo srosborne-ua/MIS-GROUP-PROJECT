@@ -576,6 +576,8 @@ input[type="checkbox"] {
 @media (min-width: 56rem) {
     .split { grid-template-columns: 7fr 5fr; gap: 5rem; }
     .split__image { aspect-ratio: 5 / 4; }
+    .split--reverse { grid-template-columns: 5fr 7fr; }
+    .split--reverse .split__image { order: 2; }
 }
 
 .amenities {
@@ -791,6 +793,14 @@ input[type="checkbox"] {
     border-top: 1px solid var(--line);
 }
 
+.room-type__image {
+    width: 100%;
+    aspect-ratio: 3 / 2;
+    object-fit: cover;
+    border-radius: var(--radius);
+    margin-bottom: 0.5rem;
+}
+
 .room-type__name {
     font-family: var(--serif);
     font-weight: 400;
@@ -816,6 +826,7 @@ input[type="checkbox"] {
 @media (min-width: 56rem) {
     .room-type { grid-template-columns: 1fr 1.2fr 1.2fr; gap: 3rem; align-items: start; }
     .room-type .fine-print { grid-column: 1; }
+    .room-type__image { grid-column: 1 / -1; aspect-ratio: 2 / 1; margin-bottom: 0; }
 }
 
 .facts {

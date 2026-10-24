@@ -72,6 +72,10 @@
         ]
     },
 
+    "dining": {
+        "restaurant_and_bar": "TODO: restaurant and bar name, hours, and whether it serves breakfast (the website shows a restaurant and bar off the lobby)"
+    },
+
     "location": {
         "summary": "Tuscaloosa, Alabama.",
         "neighborhood_and_nearby": "TODO: neighborhood description and nearby attractions (e.g., distance to campus and the stadium)"

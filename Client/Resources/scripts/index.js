@@ -131,6 +131,14 @@
     // Loaded from the API at startup (see init). Keyed by type: king, queen, twin, suite.
     let ROOM_TYPES = {};
 
+    // Stand-in photography (README assumption 13). The Twin borrows the two-bed queen photo.
+    const ROOM_PHOTOS = {
+        king: ['room-king.avif', 'A king bed under a bold orange mural, with a writing desk and a mustard chair'],
+        queen: ['room-queen.avif', 'Two queen beds facing a tall window onto the trees'],
+        twin: ['room-queen.avif', 'Two made beds facing a tall window onto the trees'],
+        suite: ['room-suite.avif', 'A king bed beyond a velvet sofa and armchair in an open parlor']
+    };
+
     const AMENITIES = [
         ['Linens worth lingering in', 'High thread-count sheets, down-alternative duvets, and a pillow menu at the desk.'],
         ['Rain showers', 'Walk-in showers stocked with house-blended bath goods.'],
@@ -858,7 +866,9 @@
         $('[data-room-types]').innerHTML = Object.keys(ROOM_TYPES).map((key) => {
             const t = ROOM_TYPES[key];
             const from = key === 'suite' ? Math.min(rates.suiteWeekday, rates.suiteWeekend) : Math.min(rates.weekday, rates.weekend);
+            const photo = ROOM_PHOTOS[key];
             return '<article class="room-type">' +
+                (photo ? '<img class="room-type__image" src="Resources/images/' + photo[0] + '" alt="' + esc(photo[1]) + '" loading="lazy">' : '') +
                 '<h2 class="room-type__name">' + esc(t.name) + '</h2>' +
                 '<p class="room-type__blurb">' + esc(t.blurb) + '</p>' +
                 '<dl class="room-type__facts">' +
