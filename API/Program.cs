@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.HttpOverrides;
 using API.Concierge;
 using API.Database;
 using API.Services;
@@ -44,13 +45,15 @@ if (ReadOnlyDb.IsConfigured)
 builder.Services.AddSingleton<ConciergePrompt>();
 builder.Services.AddSingleton<ConciergeTools>();
 builder.Services.AddSingleton<ConciergeService>();
+builder.Services.AddSingleton<ConciergeLimits>();
 
-// Cap AI requests per visitor to protect API spend: 20 messages a minute per IP.
+// Cap AI requests per visitor to protect API spend: 6 messages a minute per IP. Hourly,
+// in-progress, and site-wide daily caps are in ConciergeLimits.
 builder.Services.AddRateLimiter(options =>
 {
     options.AddPolicy("concierge", context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-        _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1) }));
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 6, Window = TimeSpan.FromMinutes(1) }));
     options.OnRejected = async (context, cancellationToken) =>
     {
         context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
@@ -67,6 +70,25 @@ var app = builder.Build();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+}
+else
+{
+    // Behind Azure's front end the app only sees plain HTTP from the proxy. Read the visitor's
+    // real IP (for the concierge limits) and the original scheme (so HSTS is sent) from the
+    // X-Forwarded headers. Only the last hop is trusted, which is the address Azure added,
+    // so a visitor can't spoof their own. Production only: locally anyone could send these.
+    var forwarded = new ForwardedHeadersOptions
+    {
+        ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+        ForwardLimit = 1
+    };
+    forwarded.KnownIPNetworks.Clear();
+    forwarded.KnownProxies.Clear();
+    app.UseForwardedHeaders(forwarded);
+
+    // Tell browsers to use HTTPS for this site from now on, so the first plain-HTTP
+    // request is the only one that can ever go out unencrypted.
+    app.UseHsts();
 }
 
 app.UseHttpsRedirection();

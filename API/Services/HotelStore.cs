@@ -29,6 +29,8 @@ public class HotelStore(Db db)
 {
     private const decimal MaxRate = 999999.99m;   // DECIMAL(8,2)
     private const string ReservationPrefix = "DC-";
+    private const int MaxHoldNights = 366;       // longest hold or event block
+    private const int MaxAdvanceDays = 3 * 365;  // furthest ahead a hold, block, or rate preview can reach
     private const string HoldPrefix = "H-";
     private const string BlockPrefix = "B-";
 
@@ -139,18 +141,20 @@ public class HotelStore(Db db)
     public async Task<List<RateOverride>> RemoveRateOverrideAsync(DateOnly date)
     {
         await using var conn = await db.OpenAsync();
-        await conn.ExecuteAsync(
+        var removed = await conn.ExecuteAsync(
             """
             DELETE FROM seasonal_rate
             WHERE hotel_id = @HotelId AND room_type_id IS NULL AND first_night = @Date AND last_night = @Date
             """,
             new { Db.HotelId, Date = date });
+        if (removed == 0) throw new HotelRuleException("There’s no special rate on that date. It may already be removed.", notFound: true);
         return await LoadOverridesAsync(conn);
     }
 
     public async Task<List<RatePreviewDay>> GetRatePreviewAsync(DateOnly start, int days)
     {
         var count = Math.Clamp(days, 0, 366);
+        CheckHorizon(start, "Choose a start date within the next few years.");
         await using var conn = await db.OpenAsync();
         var book = await RateBook.LoadAsync(conn, null, start, start.AddDays(count));
         return Enumerable.Range(0, count)
@@ -199,18 +203,18 @@ public class HotelStore(Db db)
 
     public async Task<RoomCheck> CheckRoomAsync(int number, string? checkinText, string? checkoutText)
     {
-        var checkin = ParseDate(checkinText);
-        var checkout = ParseDate(checkoutText);
-        if (checkin == null || checkout == null) throw new HotelRuleException("Choose valid dates.");
         await using var conn = await db.OpenAsync();
+        // Staff can book past dates, so a past arrival is allowed here; CreateReservationAsync
+        // still refuses it for guests. The stay length cap keeps the quote small.
+        var (checkin, checkout) = CheckStayDates(checkinText, checkoutText, allowPast: true, await MaxNightsAsync(conn));
         var room = await conn.QuerySingleOrDefaultAsync<RoomRow>(RoomSelect + " AND r.room_number = @Number",
             new { Db.HotelId, Number = number })
             ?? throw new HotelRuleException("We couldn’t find that room.", notFound: true);
-        var conflicts = await CommitmentsAsync(conn, null, [number], checkin.Value, checkout.Value);
-        var book = await RateBook.LoadAsync(conn, null, checkin.Value, checkout.Value);
+        var conflicts = await CommitmentsAsync(conn, null, [number], checkin, checkout);
+        var book = await RateBook.LoadAsync(conn, null, checkin, checkout);
         return new RoomCheck(new Room(room.RoomNumber, room.Floor, room.Code),
-            conflicts.Count == 0,
-            book.Price(room.Code, checkin.Value, checkout.Value));
+            conflicts.Count == 0 && room.IsActive,
+            book.Price(room.Code, checkin, checkout));
     }
 
     // Status of every room for a single night.
@@ -459,8 +463,11 @@ public class HotelStore(Db db)
     {
         await using var conn = await db.OpenAsync();
         await using var tx = await conn.BeginTransactionAsync();
-        var bookingId = (await LockReservationAsync(conn, tx, id)).Id;
-        await conn.ExecuteAsync(
+        var booking = await LockReservationAsync(conn, tx, id);
+        var bookingId = booking.Id;
+        if (status is not ("paid" or "unpaid")) throw new HotelRuleException("Choose paid or not paid.");
+        if (booking.Status == "cancelled") throw new HotelRuleException("Cancelled reservations can’t be changed.");
+        var changed = await conn.ExecuteAsync(
             """
             UPDATE payment
             SET status = @Status,
@@ -468,7 +475,8 @@ public class HotelStore(Db db)
                 updated_at = @Now
             WHERE booking_id = @Id
             """,
-            new { Id = bookingId, Status = status == "paid" ? "paid" : "unpaid", Now = DateTime.UtcNow }, tx);
+            new { Id = bookingId, Status = status, Now = DateTime.UtcNow }, tx);
+        if (changed == 0) throw new HotelRuleException("Reservation not found.", notFound: true);
         await tx.CommitAsync();
         return (await LoadReservationAsync(conn, bookingId))!;
     }
@@ -530,9 +538,10 @@ public class HotelStore(Db db)
 
     public async Task ReleaseHoldAsync(string id)
     {
-        if (ParseId(HoldPrefix, id) is not { } holdId) return;
+        var gone = new HotelRuleException("That hold was not found. It may already be released.", notFound: true);
+        if (ParseId(HoldPrefix, id) is not { } holdId) throw gone;
         await using var conn = await db.OpenAsync();
-        await conn.ExecuteAsync("DELETE FROM maintenance_block WHERE id = @Id", new { Id = holdId });
+        if (await conn.ExecuteAsync("DELETE FROM maintenance_block WHERE id = @Id", new { Id = holdId }) == 0) throw gone;
     }
 
     public async Task<List<Block>> GetBlocksAsync()
@@ -597,9 +606,10 @@ public class HotelStore(Db db)
 
     public async Task RemoveBlockAsync(string id)
     {
-        if (ParseId(BlockPrefix, id) is not { } blockId) return;
+        var gone = new HotelRuleException("That event block was not found. It may already be removed.", notFound: true);
+        if (ParseId(BlockPrefix, id) is not { } blockId) throw gone;
         await using var conn = await db.OpenAsync();
-        await conn.ExecuteAsync("DELETE FROM event_block WHERE id = @Id", new { Id = blockId });
+        if (await conn.ExecuteAsync("DELETE FROM event_block WHERE id = @Id", new { Id = blockId }) == 0) throw gone;
     }
 
     // Sample bookings are priced at the default rates, since Reset clears every special rate.
@@ -656,7 +666,17 @@ public class HotelStore(Db db)
         var end = ParseDate(endText);
         if (start == null || end == null) throw new HotelRuleException("Choose the first and last night.");
         if (end < start) throw new HotelRuleException("The last night can’t be before the first.");
+        if (end < Today()) throw new HotelRuleException("The last night can’t be in the past.");
+        if (end.Value.DayNumber - start.Value.DayNumber >= MaxHoldNights)
+            throw new HotelRuleException("Holds and event blocks can cover up to " + MaxHoldNights + " nights.");
+        CheckHorizon(end.Value, "Choose dates within the next few years.");
         return (start.Value, end.Value);
+    }
+
+    // Keeps dates in a range the rest of the code can do date math on without overflowing.
+    private static void CheckHorizon(DateOnly date, string message)
+    {
+        if (date < Today().AddDays(-MaxHoldNights) || date > Today().AddDays(MaxAdvanceDays)) throw new HotelRuleException(message);
     }
 
     // Same rules and wording as the booking and staff forms in the client.

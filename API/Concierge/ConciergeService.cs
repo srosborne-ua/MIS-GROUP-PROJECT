@@ -17,10 +17,10 @@ public enum ConciergeStatus { Ok, Refusal, MaxTokens }
 // ConciergeTools work without restructuring this class.
 public class ConciergeService(ConciergePrompt prompt, ConciergeTools tools)
 {
-    public const int MaxHistory = 10;          // rolling window of messages sent to the model
+    public const int MaxHistory = 6;           // rolling window of messages sent to the model
     private const int MaxMessageChars = 2000;  // per message
     private const int MaxTokens = 2048;        // short chat replies; includes thinking
-    private const int MaxToolTurns = 8;        // schema, a query or two, availability, then the answer
+    private const int MaxToolTurns = 6;        // schema, a couple of queries, availability, then the answer
     private const int HoldBackChars = 200;     // see Run(): longer than a pre-tool note, short enough to feel instant
 
     public static readonly string Model = Environment.GetEnvironmentVariable("CONCIERGE_MODEL") is { Length: > 0 } m
@@ -96,6 +96,9 @@ public class ConciergeService(ConciergePrompt prompt, ConciergeTools tools)
         for (var turn = 0; turn < MaxToolTurns; turn++)
         {
             var turnText = false;  // this turn's text is already streaming
+            // The last turn can't call tools, so a long lookup still ends with an answer, not silence.
+            BetaToolChoice? toolChoice = null;
+            if (toolDefinitions.Count > 0 && turn == MaxToolTurns - 1) toolChoice = new BetaToolChoiceNone();
             pending.Clear();
             var parameters = new MessageCreateParams
             {
@@ -105,6 +108,7 @@ public class ConciergeService(ConciergePrompt prompt, ConciergeTools tools)
                 Messages = conversation,
                 OutputConfig = new BetaOutputConfig { Effort = Effort.Low },  // chat route: fast, concise answers
                 Tools = toolDefinitions.Count > 0 ? toolDefinitions : null,
+                ToolChoice = toolChoice,
                 Fallbacks = UseFallbacks ? new BetaFallbacksParam(new Default()) : null,
                 Betas = UseFallbacks ? [AnthropicBeta.ServerSideFallback2026_07_01] : null
             };

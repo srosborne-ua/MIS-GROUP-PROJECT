@@ -11,7 +11,7 @@ namespace API.Controllers;
 // { "type": "text", "text": "..." } | { "type": "reset" } | { "type": "done" } | { "type": "error", "message": "..." }
 [ApiController]
 [Route("api/concierge")]
-public class ConciergeController(ConciergeService concierge, ILogger<ConciergeController> logger) : ControllerBase
+public class ConciergeController(ConciergeService concierge, ConciergeLimits limits, ILogger<ConciergeController> logger) : ControllerBase
 {
     private const string FriendlyError = "Sorry, I'm having trouble answering right now. Please try again in a moment, or call the front desk.";
     private const string RefusalMessage = "I'm sorry, I can't help with that. I'm happy to answer questions about your stay or booking.";
@@ -43,6 +43,28 @@ public class ConciergeController(ConciergeService concierge, ILogger<ConciergeCo
             return;
         }
 
+        var visitor = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var blocked = limits.TryEnter(visitor);
+        if (blocked != ConciergeBlock.None)
+        {
+            logger.LogWarning("Concierge: message refused ({Limit})", blocked);
+            Response.StatusCode = StatusCodes.Status429TooManyRequests;
+            await Response.WriteAsJsonAsync(new { message = ConciergeLimits.Message(blocked) });
+            return;
+        }
+
+        try
+        {
+            await Stream(input.Page, messages);
+        }
+        finally
+        {
+            limits.Leave(visitor);
+        }
+    }
+
+    private async Task Stream(string? page, List<Anthropic.Models.Beta.Messages.BetaMessageParam> messages)
+    {
         Response.ContentType = "application/x-ndjson; charset=utf-8";
         Response.Headers.CacheControl = "no-store";
         var aborted = HttpContext.RequestAborted;
@@ -55,7 +77,7 @@ public class ConciergeController(ConciergeService concierge, ILogger<ConciergeCo
 
         try
         {
-            var status = await concierge.Run(messages, input.Page ?? "main",
+            var status = await concierge.Run(messages, page ?? "main",
                 text => Send(new { type = "text", text }),
                 () => Send(new { type = "reset" }),
                 aborted);

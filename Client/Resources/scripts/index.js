@@ -1076,9 +1076,14 @@
         const releaseHandler = async (e) => {
             const button = e.target.closest('[data-action="release-hold"]');
             if (!button) return;
-            await api.releaseHold(button.dataset.id);
+            let released = 'Hold released.';
+            try {
+                await api.releaseHold(button.dataset.id);
+            } catch (err) {
+                released = err.message;
+            }
             await renderRoomsPanel();
-            $('#room-summary').textContent = 'Hold released.';
+            $('#room-summary').textContent = released;
             ($('#room-panel h3') || $('[data-panel="rooms"] .panel__title')).focus();
         };
         $('#room-panel').addEventListener('click', releaseHandler);
@@ -1118,7 +1123,11 @@
             const button = e.target.closest('[data-action="remove-block"]');
             if (!button) return;
             if (!window.confirm('Release every room in this block?')) return;
-            await api.removeBlock(button.dataset.id);
+            try {
+                await api.removeBlock(button.dataset.id);
+            } catch (err) {
+                window.alert(err.message);
+            }
             await renderEventsPanel();
             $('[data-panel="events"] .panel__title').focus();
         });
@@ -1150,9 +1159,14 @@
         $('#overrides-list').addEventListener('click', async (e) => {
             const button = e.target.closest('[data-action="remove-override"]');
             if (!button) return;
-            await api.removeRateOverride(button.dataset.date);
+            let removed = 'Special rate removed.';
+            try {
+                await api.removeRateOverride(button.dataset.date);
+            } catch (err) {
+                removed = err.message;
+            }
             await renderRatesPanel();
-            $('#rates-message').textContent = 'Special rate removed.';
+            $('#rates-message').textContent = removed;
             of.date.focus();
         });
     }
