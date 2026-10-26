@@ -230,6 +230,28 @@ Text the model writes before calling a tool (a note like "Next Friday is Oct 30"
 
 The validator is also checked directly against queries such as DROP/INSERT/UPDATE, `;`, `--`, `/* */`, `#`, base tables (directly, in JOINs, comma joins, subqueries, and `UNION TABLE`), other schemas, backquotes, `INTO OUTFILE`, `USER()`, `@@version`, `SLEEP()`, `GET_LOCK()`, `FOR SHARE`, and normal counts, joins, and searches, and `druid_llm_ro` was confirmed at the database level to be refused for INSERT, UPDATE, DELETE, DROP, CREATE, GRANT, `INTO OUTFILE`, and SELECT on every table. After migration 003 it was re-checked: it can read the new views, and is still refused on `guest` and `booking`.
 
+## Security and concierge spend limits
+
+**Transport and headers.** The Azure app is set to HTTPS Only, so plain-HTTP requests redirect to HTTPS. In Production the API reads the visitor's real IP and original scheme from Azure's `X-Forwarded` headers (only the last hop, the address Azure adds, is trusted) and sends `Strict-Transport-Security` (HSTS), so browsers stay on HTTPS after the first visit.
+
+**Input and date checks.** Every endpoint that takes dates is validated on the server, including the single-room check: departure after arrival, a maximum stay length, and no past arrivals for guests. Holds and event blocks can cover at most 366 nights, can't end in the past, and must fall within about three years ahead; the rate preview has the same date range. Releasing a hold, removing an event block, or removing a special rate reports "not found" instead of silently succeeding, and payment status only accepts paid or not paid and can't be changed on a cancelled reservation. All SQL is parameterized, and the browser escapes every user- or data-derived string before it reaches the page.
+
+**Concierge overuse prevention.** The concierge calls a paid model, so its use is capped in layers (limits in [ConciergeLimits.cs](API/Concierge/ConciergeLimits.cs), [Program.cs](API/Program.cs), and [ConciergeService.cs](API/Concierge/ConciergeService.cs)):
+
+| Limit | Value |
+| --- | --- |
+| Messages per minute, per visitor IP | 6 |
+| Messages per hour, per visitor IP | 60 |
+| Replies in progress at once, per visitor IP | 2 |
+| Messages per day, whole site (hotel-local day) | 1,500 (`CONCIERGE_DAILY_LIMIT` overrides) |
+| Chat history sent to the model | last 6 messages, 2,000 characters each |
+| Tool turns per reply | 6; the last turn can't call tools, so the reply always ends with an answer |
+| Request size | 32 KB |
+
+A refused message gets a friendly reply and the rest of the site keeps working. The counts live in the app's memory (one instance, reset on restart). Beyond these, set a monthly spend limit and usage alert on the Anthropic workspace that holds the key.
+
+**Not done yet.** The Staff Portal and its API endpoints now require staff sign-in (assumptions 9 and 30), but reservation numbers are still sequential (a guest's confirmation page shows full details only right after booking), and there's no "forgot password" email. The booking endpoint has no rate limit of its own, and the site sends no `Content-Security-Policy` or clickjacking headers.
+
 ## Design and accessibility
 
 - **Feel:** minimal, editorial, boutique hotel, with a local Tuscaloosa character.

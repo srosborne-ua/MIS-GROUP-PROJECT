@@ -152,6 +152,13 @@ Client/
 - **Errors:** catch database errors and return `{ "message": "..." }`. Never expose stack traces, SQL text, or connection details to the client or the model.
 - **Defense in depth:** database permissions are the real protection; code validation and prompt rules are backup layers. Don't rely on any single layer.
 
+### Security and LLM overuse prevention
+
+- **Transport:** Azure App Service is HTTPS Only. In Production, `Program.cs` applies forwarded headers (last hop only, `ForwardLimit = 1`) so the real client IP and HTTPS scheme are visible, and sends HSTS. Don't trust `X-Forwarded-*` in Development.
+- **Validate on the server:** every date range (including the single-room check), holds and blocks (at most 366 nights, not in the past, within about three years ahead), payment status values, and cancelled-reservation edits. Deletes of holds, blocks, and special rates must report "not found" when 0 rows change.
+- **Concierge spend limits** (keep them when changing the concierge): 6 messages/min and 60/hour per IP, 2 replies in progress per IP, and a site-wide daily cap of 1,500 (`CONCIERGE_DAILY_LIMIT`), all in memory (`ConciergeLimits`, so keep one instance). History is capped at 6 messages and a reply at 6 tool turns; the last turn runs with tools turned off so the model must answer. Don't raise these without considering cost, and keep the Anthropic workspace spend limit in place.
+- **Known gaps:** sequential reservation IDs (the guest confirmation page now shows details only right after booking), no "forgot password" email (a manager resets passwords), no booking-endpoint rate limit, no CSP or clickjacking headers.
+
 ### AI Concierge — planned features
 
 - Current state: Druid AI Assistant answers hotel and booking questions only (from `hotel-info.json`, or from the database views when `DB_LLM_RO_CONNECTION` is set), checks availability and exact prices with `check_availability` (the same `HotelStore` search as the booking page), knows today's hotel-local date, is aware of which site section the user is on (main / booking / employee portal), and is restricted to booking-related topics.
