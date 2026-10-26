@@ -41,6 +41,8 @@ builder.Services.AddSingleton<Db>();
 builder.Services.AddSingleton<HotelStore>();
 builder.Services.AddSingleton<EmployeeStore>();
 builder.Services.AddSingleton<ShiftStore>();
+// Booking receipts from a no-reply address (Azure Communication Services). Sends nothing until configured.
+builder.Services.AddSingleton<ConfirmationEmail>();
 
 // Staff sign-in: an HttpOnly cookie (StaffSession). Every endpoint requires a signed-in
 // employee unless it's marked [AllowAnonymous], so a new endpoint is staff only by default.
@@ -76,14 +78,24 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy("sign-in", context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(15) }));
+    // Each booking emails whatever address was entered, so cap guest bookings at 10 an hour
+    // per IP to keep the form from being used to send mail to strangers. Signed-in staff
+    // (one front-desk IP, many bookings) aren't limited.
+    options.AddPolicy("booking", context => context.User.Identity?.IsAuthenticated == true
+        ? RateLimitPartition.GetNoLimiter("staff")
+        : RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromHours(1) }));
     options.OnRejected = async (context, cancellationToken) =>
     {
-        var signIn = context.HttpContext.Request.Path.StartsWithSegments("/api/auth");
+        var path = context.HttpContext.Request.Path;
         context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
         await context.HttpContext.Response.WriteAsJsonAsync(
-            new { message = signIn
+            new { message = path.StartsWithSegments("/api/auth")
                 ? "Too many sign-in attempts. Please wait a few minutes and try again."
-                : "Too many messages. Please wait a minute and try again." }, cancellationToken);
+                : path.StartsWithSegments("/api/reservations")
+                    ? "That’s a lot of bookings in a short time. Please call the front desk and we’ll take care of you."
+                    : "Too many messages. Please wait a minute and try again." }, cancellationToken);
     };
 });
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
@@ -122,9 +134,11 @@ app.UseHttpsRedirection();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
+app.UseAuthentication();
+
+// After authentication, so the booking limit can tell signed-in staff from guests.
 app.UseRateLimiter();
 
-app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();

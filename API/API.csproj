@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <PackageReference Include="Anthropic" Version="12.57.0" />
+    <PackageReference Include="Azure.Communication.Email" Version="1.1.0" />
     <PackageReference Include="Dapper" Version="2.1.89" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
     <PackageReference Include="MySqlConnector" Version="2.6.2" />

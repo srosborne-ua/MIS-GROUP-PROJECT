@@ -933,7 +933,7 @@
         if (!r) {
             // Reloaded or opened from a link: the details aren't kept in the browser.
             body.innerHTML = '<p class="lede">' + (id ? 'Your confirmation code is <strong>' + esc(id) + '</strong>. ' : '') +
-                'Keep it handy, and call the front desk if you need to look up or change your stay.</p>' +
+                'Your confirmation email has the full details. Keep it handy, and call the front desk if you need to change your stay.</p>' +
                 '<div class="form-actions"><a class="btn btn--ghost" href="#/home">Back to the hotel</a></div>';
             return;
         }
@@ -960,7 +960,7 @@
                         '<li><strong>Two days out</strong> We’ll send parking, directions, and a few supper suggestions.</li>' +
                         '<li><strong>Arrival</strong> Your room is ready from 3 PM. Running late? We’ll wait up.</li>' +
                     '</ol>' +
-                    '<p class="fine-print">Prototype: emails are simulated and recorded in the Staff Portal.</p>' +
+                    '<p class="fine-print">Your receipt comes from a no-reply address. Prototype: the pre-arrival note is simulated.</p>' +
                     '<div class="form-actions"><a class="btn btn--ghost" href="#/home">Back to the hotel</a></div>' +
                 '</div>' +
             '</div>';

@@ -32,7 +32,7 @@ The API serves the client too (locally straight from `Client/`; published builds
 dotnet run --project API --launch-profile http          # site and API on http://localhost:5269
 ```
 
-**Deployment:** Azure App Service (Linux, single instance) via [.github/workflows/deploy-azure.yml](.github/workflows/deploy-azure.yml) on every push to `main`. On Azure, `ANTHROPIC_API_KEY` is an App Service environment variable. Setup steps are in the README.
+**Deployment:** Azure App Service (Linux, single instance) via [.github/workflows/deploy-azure.yml](.github/workflows/deploy-azure.yml) on every push to `main`. On Azure, `ANTHROPIC_API_KEY`, `ACS_EMAIL_CONNECTION`, and `EMAIL_SENDER` (booking confirmation emails, `ConfirmationEmail`) are App Service environment variables. Setup steps are in the README.
 
 There is no test suite or linter. Verify changes by loading the site and walking through the affected views on both a narrow (phone) and wide (desktop) viewport.
 
@@ -43,7 +43,7 @@ The AI concierge is part of the API (`POST api/concierge`). It needs `ANTHROPIC_
 ## Structure
 
 ```
-.env                          Secrets (ANTHROPIC_API_KEY, DB_APP_CONNECTION, DB_LLM_RO_CONNECTION, DB admin login). Git-ignored; never commit.
+.env                          Secrets (ANTHROPIC_API_KEY, DB_APP_CONNECTION, DB_LLM_RO_CONNECTION, ACS_EMAIL_CONNECTION, DB admin login). Git-ignored; never commit.
 .env.example                  Variable names with placeholders (committed)
 .github/workflows/deploy-azure.yml   Publish and deploy to Azure App Service on push to main
 API/                          ASP.NET Core Web API (.NET 10, controllers); also serves Client/
@@ -53,6 +53,7 @@ API/                          ASP.NET Core Web API (.NET 10, controllers); also 
 ├── Services/HotelStore.cs    All booking, availability, and pricing rules, on MySQL (Dapper)
 ├── Services/EmployeeStore.cs Staff accounts, roles, and sign-in rules
 ├── Services/ShiftStore.cs    Staff shift schedule rules
+├── Services/ConfirmationEmail.cs  Booking receipt email (Azure Communication Services, no-reply)
 ├── Services/StaffSession.cs  Sign-in cookie setup and the per-minute session re-check
 ├── Services/PasswordHasher.cs   PBKDF2-SHA256 password hashes
 ├── Services/AddEmployeeCommand.cs   `dotnet run --project API -- add-employee` (first account)
@@ -156,8 +157,9 @@ Client/
 
 - **Transport:** Azure App Service is HTTPS Only. In Production, `Program.cs` applies forwarded headers (last hop only, `ForwardLimit = 1`) so the real client IP and HTTPS scheme are visible, and sends HSTS. Don't trust `X-Forwarded-*` in Development.
 - **Validate on the server:** every date range (including the single-room check), holds and blocks (at most 366 nights, not in the past, within about three years ahead), payment status values, and cancelled-reservation edits. Deletes of holds, blocks, and special rates must report "not found" when 0 rows change.
+- **Booking limit:** guest bookings are capped at 10/hour per IP (the `booking` policy) because each one emails the address entered; signed-in staff are exempt, which is why `UseRateLimiter` runs after `UseAuthentication`. Confirmation emails never include card details, and guest-entered text in them is HTML-encoded.
 - **Concierge spend limits** (keep them when changing the concierge): 6 messages/min and 60/hour per IP, 2 replies in progress per IP, and a site-wide daily cap of 1,500 (`CONCIERGE_DAILY_LIMIT`), all in memory (`ConciergeLimits`, so keep one instance). History is capped at 6 messages and a reply at 6 tool turns; the last turn runs with tools turned off so the model must answer. Don't raise these without considering cost, and keep the Anthropic workspace spend limit in place.
-- **Known gaps:** sequential reservation IDs (the guest confirmation page now shows details only right after booking), no "forgot password" email (a manager resets passwords), no booking-endpoint rate limit, no CSP or clickjacking headers.
+- **Known gaps:** sequential reservation IDs (the guest confirmation page now shows details only right after booking), no "forgot password" email (a manager resets passwords), no CSP or clickjacking headers.
 
 ### AI Concierge — planned features
 

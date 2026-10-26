@@ -2,13 +2,14 @@ using API.Models;
 using API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace API.Controllers;
 
 // Staff only, except creating a reservation, which guests do from the booking page.
 [ApiController]
 [Route("api/reservations")]
-public class ReservationsController(HotelStore store) : ControllerBase
+public class ReservationsController(HotelStore store, ConfirmationEmail confirmationEmail) : ControllerBase
 {
     // GET api/reservations?status=upcoming&payment=any&q=smith&page=1
     [HttpGet]
@@ -25,10 +26,16 @@ public class ReservationsController(HotelStore store) : ControllerBase
     // POST api/reservations
     // The body never contains card details: only paid/unpaid and the card-on-file opt-in.
     // source "staff" (past arrivals allowed, no payment method) only counts for signed-in staff.
+    // The guest is emailed a receipt either way; a failed email doesn't undo the booking.
     [HttpPost]
     [AllowAnonymous]
-    public Task<Reservation> CreateReservation(CreateReservationRequest input) =>
-        store.CreateReservationAsync(input, isStaff: input.Source == "staff" && User.Identity?.IsAuthenticated == true);
+    [EnableRateLimiting("booking")]
+    public async Task<Reservation> CreateReservation(CreateReservationRequest input)
+    {
+        var reservation = await store.CreateReservationAsync(input, isStaff: input.Source == "staff" && User.Identity?.IsAuthenticated == true);
+        await confirmationEmail.SendAsync(reservation);
+        return reservation;
+    }
 
     // POST api/reservations/DC-1042/cancel
     [HttpPost("{id}/cancel")]

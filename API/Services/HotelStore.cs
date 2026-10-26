@@ -403,12 +403,22 @@ public class HotelStore(Db db)
                 Now = now
             }, tx);
 
-        await AddMessageAsync(conn, tx, bookingId, "system", "Confirmation emailed to " + guest.Email + ".", now);
+        // ConfirmationEmail logs whether the confirmation went out, after this commits.
         await AddMessageAsync(conn, tx, bookingId, "system",
             "Pre-arrival note (parking, directions, check-in time) scheduled for " + FormatDate(reminder) + ".", now);
 
         await tx.CommitAsync();
         return (await LoadReservationAsync(conn, bookingId))!;
+    }
+
+    // A system note on a reservation's log, outside any other change (e.g. an email's outcome).
+    public async Task LogSystemMessageAsync(string id, string text)
+    {
+        var bookingId = ParseId(ReservationPrefix, id) ?? throw new HotelRuleException("We couldn’t find that reservation.", notFound: true);
+        await using var conn = await db.OpenAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        await AddMessageAsync(conn, tx, bookingId, "system", text, DateTime.UtcNow);
+        await tx.CommitAsync();
     }
 
     public async Task<Reservation> CancelReservationAsync(string id)

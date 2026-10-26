@@ -38,6 +38,8 @@ Then visit <http://localhost:5269>. Locally the API serves the `Client/` folder 
 
 The AI concierge needs `ANTHROPIC_API_KEY` in a `.env` file at the project root (git-ignored; never commit it). Without the key, the chat shows a friendly error and the rest of the site works normally. If the database is unreachable, the API returns a friendly "offline" message instead.
 
+Optional: `ACS_EMAIL_CONNECTION` and `EMAIL_SENDER` turn on the guest's confirmation email (see [Deploying to Azure](#deploying-to-azure)). Without them, bookings still work and the reservation's log in the Staff Portal says no email was sent.
+
 Optional: `DB_LLM_RO_CONNECTION` (the read-only `druid_llm_ro` login; see `API/Database/create-llm-ro-user.sql`) turns on the concierge's knowledge-base lookups (RAG, see [AI concierge](#ai-concierge)). Without it, the concierge answers from `hotel-info.json` as before. `.env.example` lists every variable.
 
 There is no automated test suite. Check changes by walking through the affected views at both phone and desktop widths.
@@ -54,6 +56,17 @@ One-time setup:
 4. **Allow publish-profile deployments:** Settings > Configuration > turn on "SCM Basic Auth Publishing Credentials". Then download the publish profile from the app's Overview page.
 5. **In GitHub** (Settings > Secrets and variables > Actions): add the secret `AZURE_WEBAPP_PUBLISH_PROFILE` (paste the whole publish profile file) and the variable `AZURE_WEBAPP_NAME` (the Web App's name).
 6. **Deploy:** push to `main`, or run the workflow from the Actions tab.
+
+### Confirmation emails
+
+Guests get a receipt (confirmation code, room, dates, nightly rates, total, payment status) from a no-reply address, sent by Azure Communication Services. Staff-created bookings email the guest too.
+
+1. In the Azure portal, create an **Email Communication Services** resource, then under **Provision domains** add an **Azure managed domain**. Its sender is `DoNotReply@<id>.azurecomm.net`, with no DNS setup.
+2. Create a **Communication Services** resource and, under **Email > Domains**, connect the managed domain.
+3. Copy the Communication Services connection string (**Settings > Keys**).
+4. On the App Service (or in your local `.env`), set `ACS_EMAIL_CONNECTION` to that connection string and `EMAIL_SENDER` to the `DoNotReply@…azurecomm.net` address.
+
+The reservation's log in the Staff Portal records whether each email went out. A failed email never cancels the booking. Azure-managed domains have low sending limits, which is fine for testing; a custom domain (`noreply@` the hotel's own domain) needs DNS records and lifts them (assumption 34).
 
 Keep the app at **one instance**: the concierge rate limit lives in the app's memory.
 
@@ -74,13 +87,14 @@ How it was set up, for rebuilding it:
 ## Project structure
 
 ```
-.env                          Secrets (ANTHROPIC_API_KEY, DB_APP_CONNECTION, DB_LLM_RO_CONNECTION). Git-ignored.
+.env                          Secrets (ANTHROPIC_API_KEY, DB_APP_CONNECTION, DB_LLM_RO_CONNECTION, ACS_EMAIL_CONNECTION). Git-ignored.
 .env.example                  Variable names with placeholder values (safe to commit)
 API/                          ASP.NET Core Web API (.NET 10)
 ├── Controllers/              One controller per resource
 ├── Models/                   Response shapes and request bodies (hotel, employees, concierge)
 ├── Services/HotelStore.cs    All booking, availability, and pricing rules, on MySQL
 ├── Services/EmployeeStore.cs Staff accounts and sign-in rules (StaffSession: the sign-in cookie; PasswordHasher: PBKDF2)
+├── Services/ConfirmationEmail.cs  Booking receipt email to the guest (Azure Communication Services, no-reply)
 ├── Database/                 schema.sql, seed.sql, migrate-*.sql, the read-only concierge login, connection factories, and sample data for Reset
 ├── Services/DotEnv.cs        Loads .env at startup
 └── Concierge/                AI concierge: prompt, hotel facts, Anthropic SDK call, tools (database queries, availability), SQL validator
@@ -250,7 +264,7 @@ The validator is also checked directly against queries such as DROP/INSERT/UPDAT
 
 A refused message gets a friendly reply and the rest of the site keeps working. The counts live in the app's memory (one instance, reset on restart). Beyond these, set a monthly spend limit and usage alert on the Anthropic workspace that holds the key.
 
-**Not done yet.** The Staff Portal and its API endpoints now require staff sign-in (assumptions 9 and 30), but reservation numbers are still sequential (a guest's confirmation page shows full details only right after booking), and there's no "forgot password" email. The booking endpoint has no rate limit of its own, and the site sends no `Content-Security-Policy` or clickjacking headers.
+**Not done yet.** The Staff Portal and its API endpoints now require staff sign-in (assumptions 9 and 30), but reservation numbers are still sequential (a guest's confirmation page shows full details only right after booking), and there's no "forgot password" email. Guest bookings are limited to 10 an hour per IP (each one sends an email; signed-in staff aren't limited). The site sends no `Content-Security-Policy` or clickjacking headers.
 
 ## Design and accessibility
 
@@ -280,7 +294,7 @@ A refused message gets a friendly reply and the rest of the site keeps working. 
 
 9. **Staff sign-in:** employees sign in with an email and password; the portal is still reachable from a footer link. See assumption 30 for the details to confirm.
 10. **Holds and event blocks:** both use a first night and a last night, and neither can overlap an existing booking.
-11. **Guest communication:** confirmation emails, pre-arrival notes, and staff messages are simulated. They are logged on the reservation in the Staff Portal, but nothing is actually sent.
+11. **Guest communication:** confirmation emails are sent for real (assumption 34). Pre-arrival notes, cancellation notices, and staff messages are still simulated: they are logged on the reservation in the Staff Portal, but nothing is sent.
 
 **Content**
 
@@ -317,3 +331,4 @@ A refused message gets a friendly reply and the rest of the site keeps working. 
 31. **Two roles:** managers manage accounts, the shift schedule, and Reset sample data; staff do all the front-desk work, including changing rates and cancelling reservations. Accounts that existed before roles became managers. Mr. Rogers to confirm whether rates, cancellations, or anything else should also be manager only.
 32. **Shift schedule:** managers add and remove shifts (there's no editing; remove and re-add instead), and everyone can see the week. Shifts can be scheduled from a month back to a year ahead and run up to 16 hours; overnight shifts are allowed. A deactivated employee's existing shifts stay on the schedule, marked inactive. Nobody is notified about new shifts. Mr. Rogers to confirm this fits how the hotel schedules people, and whether he wants shift positions, time-off requests, or notifications.
 33. **Confirmation page after a reload:** looking a reservation up by its code now needs staff sign-in (codes like DC-1042 are easy to guess), so the guest's confirmation page shows the full details right after booking, but after a reload or from a saved link it shows only the confirmation code and points to the email.
+34. **Confirmation emails:** every new booking, from the site or the Staff Portal, emails the guest a receipt (confirmation code, room, dates, each night's rate, total, payment status, and their requests) from a no-reply address. It never includes card details. It's sent with Azure Communication Services from an Azure-managed `DoNotReply@…azurecomm.net` address until the hotel has its own domain. Replies aren't read, so the email tells guests to call the front desk. Guest bookings are capped at 10 an hour per IP so the form can't be used to send mail in bulk. Mr. Rogers to confirm he wants emails sent, the wording, a sender domain, and the front desk number to include.
