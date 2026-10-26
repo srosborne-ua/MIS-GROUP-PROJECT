@@ -2,6 +2,7 @@ using System.Text.Json;
 using API.Concierge;
 using API.Models;
 using Anthropic.Exceptions;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 
@@ -11,6 +12,7 @@ namespace API.Controllers;
 // { "type": "text", "text": "..." } | { "type": "reset" } | { "type": "done" } | { "type": "error", "message": "..." }
 [ApiController]
 [Route("api/concierge")]
+[AllowAnonymous]
 public class ConciergeController(ConciergeService concierge, ConciergeLimits limits, ILogger<ConciergeController> logger) : ControllerBase
 {
     private const string FriendlyError = "Sorry, I'm having trouble answering right now. Please try again in a moment, or call the front desk.";

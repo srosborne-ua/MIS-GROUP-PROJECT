@@ -1,5 +1,7 @@
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using API.Concierge;
 using API.Database;
@@ -7,6 +9,13 @@ using API.Services;
 
 // Secrets (ANTHROPIC_API_KEY) come from the repo-root .env; load them before anything reads the environment.
 DotEnv.Load();
+
+// dotnet run --project API -- add-employee: create a Staff Portal account, then exit.
+if (args.Length > 0 && args[0] == "add-employee")
+{
+    Environment.ExitCode = await AddEmployeeCommand.RunAsync();
+    return;
+}
 
 // The API also serves the site. Locally it serves the repo's Client/ folder directly, so
 // edits show on refresh; a published build carries a copy of Client/ in wwwroot instead.
@@ -30,6 +39,15 @@ builder.Services.AddControllers(options =>
 // MySQL as druid_app; the connection string is DB_APP_CONNECTION from .env.
 builder.Services.AddSingleton<Db>();
 builder.Services.AddSingleton<HotelStore>();
+builder.Services.AddSingleton<EmployeeStore>();
+builder.Services.AddSingleton<ShiftStore>();
+
+// Staff sign-in: an HttpOnly cookie (StaffSession). Every endpoint requires a signed-in
+// employee unless it's marked [AllowAnonymous], so a new endpoint is staff only by default.
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options => StaffSession.Configure(options, builder.Environment.IsDevelopment()));
+builder.Services.AddAuthorization(options =>
+    options.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
 
 // Druid AI Assistant (POST api/concierge). Register concierge tools here as
 // IConciergeTool singletons once they are approved.
@@ -54,11 +72,18 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy("concierge", context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 6, Window = TimeSpan.FromMinutes(1) }));
+    // Slow down password guessing: 10 sign-in (or password change) attempts per 15 minutes per IP.
+    options.AddPolicy("sign-in", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(15) }));
     options.OnRejected = async (context, cancellationToken) =>
     {
+        var signIn = context.HttpContext.Request.Path.StartsWithSegments("/api/auth");
         context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
         await context.HttpContext.Response.WriteAsJsonAsync(
-            new { message = "Too many messages. Please wait a minute and try again." }, cancellationToken);
+            new { message = signIn
+                ? "Too many sign-in attempts. Please wait a few minutes and try again."
+                : "Too many messages. Please wait a minute and try again." }, cancellationToken);
     };
 });
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
@@ -69,7 +94,7 @@ var app = builder.Build();
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.MapOpenApi().AllowAnonymous();
 }
 else
 {
@@ -99,6 +124,7 @@ app.UseStaticFiles();
 
 app.UseRateLimiter();
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();

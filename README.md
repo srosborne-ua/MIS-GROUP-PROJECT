@@ -23,7 +23,8 @@ The site needs MySQL 8.0.16 or later. Put the `druid_app` connection string in `
 1. Create the `mis321` schema, then run `API/Database/schema.sql` to create the tables.
 2. Run `API/Database/seed.sql` to load the hotel, room types, and 120 rooms.
 3. Create the app user `druid_app` with `SELECT, INSERT, UPDATE, DELETE` on `mis321` only, and put its connection string in `.env` as `DB_APP_CONNECTION`.
-4. Start the API and click **Reset sample data** in the Staff Portal (or `POST api/demo/reset`) to load the sample reservations, hold, and event block.
+4. Create your Staff Portal account (a manager): `dotnet run --project API -- add-employee` (it asks for your name, email, and a password of at least 12 characters, and saves to whichever database `DB_APP_CONNECTION` points at).
+5. Start the API, sign in at `#/staff`, and click **Reset sample data** to load the sample reservations, hold, and event block.
 
 If your database was built from an earlier `schema.sql`, run the `API/Database/migrate-*.sql` files you haven't run yet, in order.
 
@@ -66,8 +67,9 @@ How it was set up, for rebuilding it:
 2. As the admin login, run `schema.sql` then `seed.sql`, using a MySQL 8.x client (`brew install mysql-client@8.4`; newer clients can't log in), with `--ssl-mode=REQUIRED`.
 3. Create `druid_app` with `SELECT, INSERT, UPDATE, DELETE` on `mis321` only.
 4. On the App Service, add the environment variable `DB_APP_CONNECTION` = `Server=druid-city-db.mysql.database.azure.com;Database=mis321;User ID=druid_app;Password=…;SslMode=Required;`.
-5. To load the sample reservations, add `ALLOW_SAMPLE_RESET=true` to the App Service, click **Reset sample data** once, then remove it. Without that setting, Reset is turned off on the live site.
-6. For the concierge knowledge base: run `create-llm-ro-user.sql` as the admin login (with a real password in place of `CHANGE_ME`), then add `DB_LLM_RO_CONNECTION` = `Server=druid-city-db.mysql.database.azure.com;Database=mis321;User ID=druid_llm_ro;Password=…;SslMode=Required;` to the App Service. (A database built before the knowledge base needs `migrate-002-knowledge-documents.sql` and `migrate-003-concierge-views.sql` first, without migrate-003's GRANT lines; a database that already has `druid_llm_ro` just needs `migrate-003-concierge-views.sql`.)
+5. Run `migrate-004-employee.sql` and `migrate-005-roles-and-shifts.sql` (if the database predates them), then add the first manager account from your machine with `DB_APP_CONNECTION` pointed at the Azure database: `dotnet run --project API -- add-employee`. Everyone else can then be added from the Employees tab.
+6. To load the sample reservations, add `ALLOW_SAMPLE_RESET=true` to the App Service, sign in, click **Reset sample data** once, then remove it. Without that setting, Reset is turned off on the live site.
+7. For the concierge knowledge base: run `create-llm-ro-user.sql` as the admin login (with a real password in place of `CHANGE_ME`), then add `DB_LLM_RO_CONNECTION` = `Server=druid-city-db.mysql.database.azure.com;Database=mis321;User ID=druid_llm_ro;Password=…;SslMode=Required;` to the App Service. (A database built before the knowledge base needs `migrate-002-knowledge-documents.sql` and `migrate-003-concierge-views.sql` first, without migrate-003's GRANT lines; a database that already has `druid_llm_ro` just needs `migrate-003-concierge-views.sql`.)
 
 ## Project structure
 
@@ -76,8 +78,9 @@ How it was set up, for rebuilding it:
 .env.example                  Variable names with placeholder values (safe to commit)
 API/                          ASP.NET Core Web API (.NET 10)
 ├── Controllers/              One controller per resource
-├── Models/HotelModels.cs     Response shapes and request bodies
+├── Models/                   Response shapes and request bodies (hotel, employees, concierge)
 ├── Services/HotelStore.cs    All booking, availability, and pricing rules, on MySQL
+├── Services/EmployeeStore.cs Staff accounts and sign-in rules (StaffSession: the sign-in cookie; PasswordHasher: PBKDF2)
 ├── Database/                 schema.sql, seed.sql, migrate-*.sql, the read-only concierge login, connection factories, and sample data for Reset
 ├── Services/DotEnv.cs        Loads .env at startup
 └── Concierge/                AI concierge: prompt, hotel facts, Anthropic SDK call, tools (database queries, availability), SQL validator
@@ -109,7 +112,7 @@ The payment form is UI only. Card fields are validated in the browser (Luhn chec
 
 ## Staff Portal
 
-Reached from a footer link. It covers every staff requirement from the client:
+Reached from a footer link. Employees sign in with their email and password; until they do, the portal shows only the sign-in form, and the API refuses every staff request. It covers every staff requirement from the client:
 
 | Route | What staff can do |
 | --- | --- |
@@ -118,6 +121,13 @@ Reached from a footer link. It covers every staff requirement from the client:
 | `#/staff/rooms` | See the nightly room board; place and release holds on individual rooms |
 | `#/staff/events` | Block off groups of rooms for events |
 | `#/staff/rates` | View and edit default rates, add special date rates, preview the next 14 nights |
+| `#/staff/employees` | See the week's shift schedule and the staff accounts, change your own password. Managers also add and remove shifts, add employees, make someone a manager or staff, deactivate or reactivate accounts, and set a new password for a colleague |
+
+**Roles:** every account is a **manager** or **staff**. Both can do all the front-desk work (reservations, holds, event blocks, rates) and see the schedule. Only managers can change accounts or the schedule and use Reset sample data. The API enforces this (`[Authorize(Roles = EmployeeStore.Manager)]`); the page just hides the controls. A manager can't change their own role or deactivate themselves, so there's always at least one active manager.
+
+**Schedule:** shifts are an employee, a date, start and end times, and an optional note. An end time earlier than the start runs overnight into the next morning (for example, night audit). Shifts are up to 16 hours, one employee's shifts can't overlap, and inactive employees can't be scheduled. The schedule shows one week (Monday to Sunday) at a time.
+
+**Sign-in, in brief:** the session is an HttpOnly, SameSite=Strict cookie (ASP.NET Core cookie authentication) that lasts 12 hours from the last request. Passwords are at least 12 characters and stored only as PBKDF2-SHA256 hashes. Sign-in and password changes are limited to 10 attempts per 15 minutes per IP. Deactivating an employee or changing their password ends their sessions within a minute. Every API endpoint is staff only unless it's marked `[AllowAnonymous]` for the guest site, so new endpoints are protected by default.
 
 The **Reset sample data** link clears every reservation, guest, hold, event block, and special rate in the database, restores the default rates, and loads the sample reservations, hold, and event block. Rooms and room types are left as `seed.sql` loaded them.
 
@@ -147,7 +157,12 @@ The browser talks only to our API; it never calls Anthropic or a database direct
 | Event blocks | `GET api/blocks`, `POST api/blocks`, `DELETE api/blocks/{id}` |
 | Rates | `GET api/rates`, `PUT api/rates`, `POST api/rates/overrides`, `DELETE api/rates/overrides/{date}`, `GET api/rates/preview` |
 | Sample data | `POST api/demo/reset` |
+| Staff sign-in | `POST api/auth/sign-in`, `POST api/auth/sign-out`, `GET api/auth/me`, `PUT api/auth/password` |
+| Employees | `GET api/employees`, `POST api/employees`, `PUT api/employees/{id}/active`, `PUT api/employees/{id}/role`, `PUT api/employees/{id}/password` (all but GET are manager only) |
+| Shifts | `GET api/shifts?start=…&days=7`, `POST api/shifts`, `DELETE api/shifts/{id}` (POST and DELETE are manager only) |
 | AI concierge | `POST api/concierge` (streamed, rate limited) |
+
+Open to guests without signing in: `GET api/rooms/types`, `GET api/rooms`, `GET api/rooms/availability`, `GET api/rooms/{number}/check`, `GET api/rates`, `POST api/reservations`, `POST api/concierge`, and sign-in itself. Everything else needs a signed-in employee. Booking as staff (`source: "staff"`, which allows past arrival dates) and `allowPast` searches only count when an employee is signed in.
 
 ## AI concierge
 
@@ -241,7 +256,7 @@ The validator is also checked directly against queries such as DROP/INSERT/UPDAT
 
 **Staff Portal**
 
-9. **Staff sign-in:** the Staff Portal has no sign-in yet. It is reachable from a footer link. Once the API and database are on a network, staff endpoints need authentication before launch.
+9. **Staff sign-in:** employees sign in with an email and password; the portal is still reachable from a footer link. See assumption 30 for the details to confirm.
 10. **Holds and event blocks:** both use a first night and a last night, and neither can overlap an existing booking.
 11. **Guest communication:** confirmation emails, pre-arrival notes, and staff messages are simulated. They are logged on the reservation in the Staff Portal, but nothing is actually sent.
 
@@ -256,12 +271,12 @@ The validator is also checked directly against queries such as DROP/INSERT/UPDAT
 16. **Concierge and online payment:** the concierge tells guests online payment is "coming soon" (`payment.online_payment_available: false`), even though the booking form already offers a UI-only "pay now" option. Flip the flag once real payment ships.
 17. **Concierge welcome card:** it shows on first visit and tucks into a small "Ask the concierge" button when the visitor scrolls or uses the page, so it never covers content. If a guest minimizes it, it stays minimized for the browser session.
 18. **Hosting:** the site is hosted on Azure App Service (Linux, North Central US) as one app that serves both the site and the API. Mr. Rogers to confirm the hosting cost and whether he wants a custom domain instead of the `azurewebsites.net` address.
-19. **Public demo data:** while the site is public without staff sign-in, it holds sample data only, and anyone can open the Staff Portal. Real guest data must wait for staff authentication.
+19. **Public demo data:** the live site still holds sample data only. Staff sign-in now protects guest data, but Mr. Rogers should confirm the sign-in rules (assumption 30) before real guest data goes in.
 
 **Database**
 
 20. **One guest per email, details per booking:** a returning guest (same email) shares one guest record, but each reservation keeps the name and phone entered with it. A new booking never changes the details on earlier reservations.
-21. **Reset sample data deletes real data:** it clears every reservation and guest, so it is turned off on the live site unless `ALLOW_SAMPLE_RESET=true` is set on the server. It needs staff sign-in before launch.
+21. **Reset sample data deletes real data:** it clears every reservation and guest (never staff accounts), so it needs a signed-in employee and is turned off on the live site unless `ALLOW_SAMPLE_RESET=true` is set on the server.
 22. **Payment method:** web bookings record "online" (pay now) or "at the hotel"; staff-created bookings leave the method blank.
 23. **Database location:** the live database is in Belgium Central (the only free option for Azure for Students), while the site is in North Central US, which adds some delay to each page load. Mr. Rogers to confirm whether that's acceptable or whether to pay for a US-region database.
 24. **"Today" is Tuscaloosa time:** past-arrival checks and the staff lists use the hotel's local date (Central Time), not the server's UTC clock.
@@ -276,3 +291,7 @@ The validator is also checked directly against queries such as DROP/INSERT/UPDAT
 
 28. **Restaurant and bar:** the home page describes a restaurant and bar off the lobby. Mr. Rogers to confirm the hotel has one, and to supply its name, hours, and whether it serves breakfast.
 29. **Editing reservations:** staff can change a reservation's guest name, phone, guest count, and requests. Dates, room, and email can't be edited; changing those means cancelling and rebooking, so the price is always the one quoted at booking. Mr. Rogers to confirm that's enough for the front desk.
+30. **Staff accounts:** accounts are deactivated, never deleted, so their history stays. Passwords are at least 12 characters, sessions last 12 hours from the last request, and there's no "forgot password" email: a manager sets a new password from the Employees tab. The first account (a manager) is created from the command line (`add-employee`). Mr. Rogers to confirm whether he wants two-factor sign-in or different session lengths.
+31. **Two roles:** managers manage accounts, the shift schedule, and Reset sample data; staff do all the front-desk work, including changing rates and cancelling reservations. Accounts that existed before roles became managers. Mr. Rogers to confirm whether rates, cancellations, or anything else should also be manager only.
+32. **Shift schedule:** managers add and remove shifts (there's no editing; remove and re-add instead), and everyone can see the week. Shifts can be scheduled from a month back to a year ahead and run up to 16 hours; overnight shifts are allowed. A deactivated employee's existing shifts stay on the schedule, marked inactive. Nobody is notified about new shifts. Mr. Rogers to confirm this fits how the hotel schedules people, and whether he wants shift positions, time-off requests, or notifications.
+33. **Confirmation page after a reload:** looking a reservation up by its code now needs staff sign-in (codes like DC-1042 are easy to guess), so the guest's confirmation page shows the full details right after booking, but after a reload or from a saved link it shows only the confirmation code and points to the email.

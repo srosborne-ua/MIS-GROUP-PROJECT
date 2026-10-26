@@ -476,6 +476,9 @@ input[type="checkbox"] {
 
 .inline-actions .hint { margin: 0; }
 
+/* Several small actions in one table cell */
+.inline-actions--tight { margin-top: 0; gap: 0.25rem 1rem; }
+
 .pager {
     display: flex;
     align-items: center;
@@ -939,6 +942,8 @@ input[type="checkbox"] {
 }
 
 .staff-form { max-width: 46rem; }
+
+.staff-form--narrow { max-width: 26rem; }
 
 /* Tables become stacked rows on small screens */
 .data-table {

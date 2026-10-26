@@ -247,6 +247,42 @@ CREATE TABLE knowledge_document (
     PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- Staff Portal sign-in. password_hash is PBKDF2-SHA256 with a per-employee salt
+-- (see API/Services/PasswordHasher.cs); plain passwords are never stored. Employees
+-- are deactivated rather than deleted. No v_* view exposes this table.
+-- role: managers also manage staff accounts, the shift schedule, and Reset sample data.
+CREATE TABLE employee (
+    id                 INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    first_name         VARCHAR(60)  NOT NULL,
+    last_name          VARCHAR(60)  NOT NULL,
+    email              VARCHAR(254) NOT NULL,
+    password_hash      VARCHAR(255) NOT NULL,
+    role               ENUM('manager','staff') NOT NULL DEFAULT 'staff',
+    is_active          BOOLEAN NOT NULL DEFAULT TRUE,
+    last_signed_in_at  DATETIME NULL,
+    created_at         DATETIME NOT NULL,
+    updated_at         DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_employee_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Staff schedule. A shift whose end_time is earlier than its start_time runs overnight
+-- and ends the next morning (shift_date is the day it starts). The API shows ids as 'S-' + id.
+CREATE TABLE shift (
+    id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    employee_id  INT UNSIGNED NOT NULL,
+    shift_date   DATE NOT NULL,
+    start_time   TIME NOT NULL,
+    end_time     TIME NOT NULL,
+    note         VARCHAR(80) NOT NULL DEFAULT '',
+    created_at   DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    KEY ix_shift_date (shift_date),
+    KEY ix_shift_employee (employee_id, shift_date),
+    CONSTRAINT fk_shift_employee FOREIGN KEY (employee_id) REFERENCES employee (id) ON DELETE RESTRICT,
+    CONSTRAINT chk_shift_times CHECK (end_time <> start_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 -- The concierge's model-written SELECTs run against the v_* views below, never
 -- against tables; they are the only objects druid_llm_ro can read (see
 -- create-llm-ro-user.sql).
