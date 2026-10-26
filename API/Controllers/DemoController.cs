@@ -1,4 +1,5 @@
 using API.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace API.Controllers;
@@ -9,10 +10,11 @@ namespace API.Controllers;
 public class DemoController(HotelStore store, IWebHostEnvironment env, IConfiguration config) : ControllerBase
 {
     // POST api/demo/reset
-    // Reset deletes every booking, guest, hold, and event block, and there's no staff
-    // sign-in yet, so it only runs locally (Development) or while ALLOW_SAMPLE_RESET=true
-    // is set on the server. Turn that on, reset once, then turn it off again.
+    // Reset deletes every booking, guest, hold, and event block (never employees or shifts).
+    // It needs a signed-in manager, and it only runs locally (Development) or while
+    // ALLOW_SAMPLE_RESET=true is set on the server. Turn that on, reset once, then turn it off.
     [HttpPost("reset")]
+    [Authorize(Roles = EmployeeStore.Manager)]
     public async Task<IActionResult> Reset()
     {
         if (!env.IsDevelopment() && !string.Equals(config["ALLOW_SAMPLE_RESET"], "true", StringComparison.OrdinalIgnoreCase))

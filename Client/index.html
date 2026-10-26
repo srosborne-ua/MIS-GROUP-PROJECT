@@ -336,11 +336,32 @@
         <div class="container page-head page-head--compact">
             <p class="eyebrow">Front desk</p>
             <h1 id="staff-title" class="display display--sm" tabindex="-1">Staff Portal</h1>
-            <p class="fine-print">No staff sign-in yet.
-                <button type="button" class="btn-text" data-action="reset-demo">Reset sample data</button></p>
+            <p class="fine-print" id="staff-session" hidden>Signed in as <span id="staff-name"></span>.
+                <button type="button" class="btn-text" data-action="sign-out">Sign out</button><span data-manager-only> ·
+                <button type="button" class="btn-text" data-action="reset-demo">Reset sample data</button></span></p>
         </div>
 
-        <div class="container">
+        <!-- Sign-in (shown until an employee signs in) -->
+        <div class="container" id="staff-signin" hidden>
+            <form id="signin-form" class="staff-form staff-form--narrow" novalidate aria-labelledby="signin-title">
+                <h2 id="signin-title" class="panel__title" tabindex="-1">Employee sign-in</h2>
+                <p class="hint">For Druid City Hotel staff. Ask a colleague to add you from the Employees tab if you don’t have an account.</p>
+                <div class="field">
+                    <label for="si-email">Email</label>
+                    <input type="email" id="si-email" name="email" autocomplete="username" required>
+                </div>
+                <div class="field">
+                    <label for="si-password">Password</label>
+                    <input type="password" id="si-password" name="password" autocomplete="current-password" required>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn">Sign in</button>
+                </div>
+                <p id="si-message" class="notice" role="alert" hidden></p>
+            </form>
+        </div>
+
+        <div class="container" id="staff-portal" hidden>
             <nav class="tabs" aria-label="Staff sections">
                 <ul>
                     <li><a href="#/staff/reservations" data-staff-tab="reservations">Reservations</a></li>
@@ -348,6 +369,7 @@
                     <li><a href="#/staff/rooms" data-staff-tab="rooms">Rooms &amp; holds</a></li>
                     <li><a href="#/staff/events" data-staff-tab="events">Event blocks</a></li>
                     <li><a href="#/staff/rates" data-staff-tab="rates">Rates</a></li>
+                    <li><a href="#/staff/employees" data-staff-tab="employees">Employees</a></li>
                 </ul>
             </nav>
 
@@ -585,6 +607,139 @@
 
                 <h3 class="label-heading section-gap">Next 14 nights</h3>
                 <div id="rate-preview"></div>
+            </div>
+
+            <!-- Employees -->
+            <div class="panel" data-panel="employees" hidden>
+                <h2 class="panel__title" tabindex="-1">Employees</h2>
+
+                <!-- Shift schedule -->
+                <h3 id="sched-title" class="label-heading" tabindex="-1">Schedule</h3>
+                <nav class="pager" aria-label="Schedule weeks">
+                    <button type="button" class="btn btn--ghost" data-week="prev">Previous week</button>
+                    <p id="sched-week" class="status-line" role="status" aria-live="polite"></p>
+                    <button type="button" class="btn btn--ghost" data-week="next">Next week</button>
+                </nav>
+                <p class="fine-print"><button type="button" class="btn-text" data-week="this">Back to this week</button></p>
+                <div id="sched-days"></div>
+
+                <form id="shift-form" class="staff-form section-gap" novalidate data-manager-only>
+                    <fieldset class="fieldset">
+                        <legend>Add a shift</legend>
+                        <p class="hint">If the end time is earlier than the start, the shift runs overnight and ends the next morning.</p>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="sh-employee">Employee</label>
+                                <select id="sh-employee" name="employee" required></select>
+                            </div>
+                            <div class="field">
+                                <label for="sh-date">Date</label>
+                                <input type="date" id="sh-date" name="date" required>
+                            </div>
+                            <div class="field">
+                                <label for="sh-start">Starts</label>
+                                <input type="time" id="sh-start" name="start" value="07:00" required>
+                            </div>
+                            <div class="field">
+                                <label for="sh-end">Ends</label>
+                                <input type="time" id="sh-end" name="end" value="15:00" required>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="sh-note">Note <span class="optional">Optional</span></label>
+                            <input type="text" id="sh-note" name="note" maxlength="80" placeholder="Front desk, night audit, housekeeping…">
+                        </div>
+                    </fieldset>
+                    <div class="form-actions">
+                        <button type="submit" class="btn">Add shift</button>
+                    </div>
+                    <p id="sh-message" class="notice" role="alert" hidden></p>
+                </form>
+
+                <!-- Staff accounts -->
+                <h3 class="label-heading section-gap">Staff accounts</h3>
+                <p id="emp-status" class="status-line" role="status" aria-live="polite"></p>
+                <div id="emp-table"></div>
+
+                <form id="emp-new-form" class="staff-form section-gap" novalidate data-manager-only>
+                    <fieldset class="fieldset">
+                        <legend>Add an employee</legend>
+                        <p class="hint">They sign in to the Staff Portal with this email and password. Give them the password in person; they can change it from this tab. Managers can also manage accounts, the schedule, and sample data.</p>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="en-first">First name</label>
+                                <input type="text" id="en-first" name="firstName" autocomplete="off" required>
+                            </div>
+                            <div class="field">
+                                <label for="en-last">Last name</label>
+                                <input type="text" id="en-last" name="lastName" autocomplete="off" required>
+                            </div>
+                            <div class="field">
+                                <label for="en-email">Email</label>
+                                <input type="email" id="en-email" name="email" autocomplete="off" required>
+                            </div>
+                            <div class="field">
+                                <label for="en-password">Starting password</label>
+                                <input type="password" id="en-password" name="password" autocomplete="new-password" required aria-describedby="en-password-hint">
+                                <p id="en-password-hint" class="hint">At least 12 characters.</p>
+                            </div>
+                            <div class="field">
+                                <label for="en-role">Role</label>
+                                <select id="en-role" name="role">
+                                    <option value="staff" selected>Staff</option>
+                                    <option value="manager">Manager</option>
+                                </select>
+                            </div>
+                        </div>
+                    </fieldset>
+                    <div class="form-actions">
+                        <button type="submit" class="btn">Add employee</button>
+                    </div>
+                    <p id="en-message" class="notice" role="alert" hidden></p>
+                </form>
+
+                <form id="emp-reset-form" class="staff-form section-gap" novalidate data-manager-only>
+                    <fieldset class="fieldset">
+                        <legend>Set a new password for an employee</legend>
+                        <p class="hint">For a forgotten password. They’re signed out everywhere and sign in again with the new one.</p>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="er-employee">Employee</label>
+                                <select id="er-employee" name="employee" required></select>
+                            </div>
+                            <div class="field">
+                                <label for="er-password">New password</label>
+                                <input type="password" id="er-password" name="password" autocomplete="new-password" required aria-describedby="er-password-hint">
+                                <p id="er-password-hint" class="hint">At least 12 characters.</p>
+                            </div>
+                        </div>
+                    </fieldset>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn--ghost">Set password</button>
+                    </div>
+                    <p id="er-message" class="notice" role="alert" hidden></p>
+                </form>
+
+                <form id="emp-own-form" class="staff-form section-gap" novalidate>
+                    <fieldset class="fieldset">
+                        <legend>Change my password</legend>
+                        <div class="grid-2">
+                            <div class="field">
+                                <label for="eo-current">Current password</label>
+                                <input type="password" id="eo-current" name="currentPassword" autocomplete="current-password" required>
+                            </div>
+                            <div class="field">
+                                <label for="eo-new">New password</label>
+                                <input type="password" id="eo-new" name="newPassword" autocomplete="new-password" required aria-describedby="eo-new-hint">
+                                <p id="eo-new-hint" class="hint">At least 12 characters.</p>
+                            </div>
+                        </div>
+                    </fieldset>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn--ghost">Change password</button>
+                    </div>
+                    <p id="eo-message" class="notice" role="alert" hidden></p>
+                </form>
             </div>
         </div>
     </section>

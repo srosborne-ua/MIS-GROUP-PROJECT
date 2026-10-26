@@ -331,9 +331,9 @@ public class HotelStore(Db db)
             ?? throw new HotelRuleException(notFound, notFound: true);
     }
 
-    public async Task<Reservation> CreateReservationAsync(CreateReservationRequest input)
+    // isStaff: booked by signed-in staff, so past arrivals are allowed. The controller decides.
+    public async Task<Reservation> CreateReservationAsync(CreateReservationRequest input, bool isStaff)
     {
-        var isStaff = input.Source == "staff";
         if (input.Room is not { } number) throw new HotelRuleException("Choose a room.");
 
         await using var conn = await db.OpenAsync();

@@ -1,16 +1,19 @@
 using API.Models;
 using API.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace API.Controllers;
 
 // New rates apply to new searches only; existing reservations keep their totals.
+// Reading the rates is public (the Rooms page shows them); changing them is staff only.
 [ApiController]
 [Route("api/rates")]
 public class RatesController(HotelStore store) : ControllerBase
 {
     // GET api/rates
     [HttpGet]
+    [AllowAnonymous]
     public Task<RatesResponse> GetRates() => store.GetRatesAsync();
 
     // PUT api/rates

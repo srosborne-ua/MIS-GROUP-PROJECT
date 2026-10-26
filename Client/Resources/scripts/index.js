@@ -72,6 +72,15 @@
         });
     }
 
+    // "07:00" -> "7:00 AM", "15:30" -> "3:30 PM"
+    function fmtTime(hhmm) {
+        const [h, m] = String(hhmm || '').split(':').map(Number);
+        return ((h % 12) || 12) + ':' + pad(m) + ' ' + (h < 12 ? 'AM' : 'PM');
+    }
+
+    // The Monday on or before a date: schedule weeks run Monday to Sunday.
+    const weekStart = (iso) => addDays(iso, -((parseISO(iso).getDay() + 6) % 7));
+
     const plural = (n, word, many) => n + ' ' + (n === 1 ? word : (many || word + 's'));
 
     // Returns an error message, or '' when the range is a valid future stay.
@@ -174,7 +183,13 @@
         }
         if (res.status === 204) return null;
         const data = await res.json().catch(() => null);
-        if (!res.ok) throw new Error((data && (data.message || data.title)) || 'Something went wrong. Please try again.');
+        if (!res.ok) {
+            const err = new Error((data && (data.message || data.title)) || 'Something went wrong. Please try again.');
+            err.status = res.status;
+            // 401: the staff session ended (signed out, expired, or deactivated).
+            if (res.status === 401) onStaffSignedOut();
+            throw err;
+        }
         return data;
     }
 
@@ -315,6 +330,75 @@
         removeBlock(blockId) { return request('/blocks/' + seg(blockId), { method: 'DELETE' }); },
 
         resetDemoData() { return request('/demo/reset', { method: 'POST' }); },
+
+        // Staff sign-in. The session is an HttpOnly cookie the browser sends on its own.
+        // Resolves to the signed-in employee, or null when nobody is signed in.
+        async getCurrentEmployee() {
+            try {
+                return await request('/auth/me');
+            } catch (err) {
+                if (err.status === 401) return null;
+                throw err;
+            }
+        },
+
+        signIn(email, password) {
+            return request('/auth/sign-in', { method: 'POST', body: { email: String(email), password: String(password) } });
+        },
+
+        signOut() { return request('/auth/sign-out', { method: 'POST' }); },
+
+        changePassword(currentPassword, newPassword) {
+            return request('/auth/password', {
+                method: 'PUT',
+                body: { currentPassword: String(currentPassword), newPassword: String(newPassword) }
+            });
+        },
+
+        getEmployees() { return request('/employees'); },
+
+        createEmployee(input) {
+            return request('/employees', {
+                method: 'POST',
+                body: {
+                    firstName: String(input.firstName || ''),
+                    lastName: String(input.lastName || ''),
+                    email: String(input.email || ''),
+                    password: String(input.password || ''),
+                    role: input.role === 'manager' ? 'manager' : 'staff'
+                }
+            });
+        },
+
+        setEmployeeActive(id, active) {
+            return request('/employees/' + seg(id) + '/active', { method: 'PUT', body: { active: !!active } });
+        },
+
+        setEmployeeRole(id, role) {
+            return request('/employees/' + seg(id) + '/role', { method: 'PUT', body: { role: role === 'manager' ? 'manager' : 'staff' } });
+        },
+
+        // Shifts starting on `start` and the following days (a week by default).
+        getShifts(start, days) { return request('/shifts' + toQuery({ start, days: days || 7 })); },
+
+        createShift(input) {
+            return request('/shifts', {
+                method: 'POST',
+                body: {
+                    employeeId: Number(input.employeeId) || null,
+                    date: input.date,
+                    start: input.start,
+                    end: input.end,
+                    note: String(input.note || '')
+                }
+            });
+        },
+
+        removeShift(shiftId) { return request('/shifts/' + seg(shiftId), { method: 'DELETE' }); },
+
+        setEmployeePassword(id, password) {
+            return request('/employees/' + seg(id) + '/password', { method: 'PUT', body: { password: String(password) } });
+        },
 
         // Druid AI Assistant (POST api/concierge). Streams the reply:
         // onText(delta) appends text, onReset() discards text shown so far.
@@ -686,6 +770,9 @@
     /* ---------- Booking and checkout ---------- */
 
     let bookingContext = null;
+    // The reservation the guest just made. Looking a reservation up by id is staff only
+    // (ids are guessable), so the confirmation page shows this copy instead.
+    let lastBooking = null;
 
     function setupBookingForm() {
         const form = $('#booking-form');
@@ -765,6 +852,7 @@
                 });
                 form.reset();
                 syncPayment();
+                lastBooking = reservation;
                 go('confirmation', { id: reservation.id }, true);
             } catch (err) {
                 showNotice($('#booking-unavailable'), err.message + ' ');
@@ -838,13 +926,15 @@
 
     /* ---------- Confirmation ---------- */
 
-    async function renderConfirmation(route) {
+    function renderConfirmation(route) {
         const body = $('#confirmation-body');
-        let r;
-        try {
-            r = await api.getReservation(route.params.get('id'));
-        } catch (err) {
-            body.innerHTML = '<p class="notice">' + esc(err.message) + ' <a href="#/home">Return home</a></p>';
+        const id = route.params.get('id') || '';
+        const r = lastBooking && lastBooking.id === id ? lastBooking : null;
+        if (!r) {
+            // Reloaded or opened from a link: the details aren't kept in the browser.
+            body.innerHTML = '<p class="lede">' + (id ? 'Your confirmation code is <strong>' + esc(id) + '</strong>. ' : '') +
+                'The details of your stay are in your confirmation email.</p>' +
+                '<div class="form-actions"><a class="btn btn--ghost" href="#/home">Back to the hotel</a></div>';
             return;
         }
         const t = ROOM_TYPES[r.type];
@@ -904,9 +994,12 @@
 
     /* ---------- Staff portal ---------- */
 
-    const STAFF_PANELS = ['reservations', 'new', 'rooms', 'events', 'rates'];
+    const STAFF_PANELS = ['reservations', 'new', 'rooms', 'events', 'rates', 'employees'];
     const STATUS_LABELS = { available: 'Open', reservation: 'Booked', hold: 'Hold', block: 'Event' };
     let selectedRoom = null;
+    // The signed-in employee: undefined until checked with the server, null when signed out.
+    let staffUser;
+    const isManager = () => !!staffUser && staffUser.role === 'manager';
 
     async function renderStaff(route, changedView) {
         const panel = STAFF_PANELS.includes(route.sub) ? route.sub : 'reservations';
@@ -914,24 +1007,113 @@
             setupStaff();
             $('.view--staff').dataset.ready = 'true';
         }
+
+        if (staffUser === undefined) {
+            try {
+                staffUser = await api.getCurrentEmployee();
+            } catch (err) {
+                showStaffSignIn(err.message);
+                return null;
+            }
+        }
+        if (!staffUser) {
+            showStaffSignIn();
+            return changedView ? null : $('#signin-title');
+        }
+        $('#staff-signin').hidden = true;
+        $('#staff-portal').hidden = false;
+        $('#staff-session').hidden = false;
+        $('#staff-name').textContent = staffUser.firstName + ' ' + staffUser.lastName + (isManager() ? ' (manager)' : '');
+        // The API enforces roles; this only hides controls staff can't use.
+        $$('[data-manager-only]').forEach((el) => { el.hidden = !isManager(); });
+
         $$('[data-panel]').forEach((el) => { el.hidden = el.dataset.panel !== panel; });
         $$('[data-staff-tab]').forEach((a) => {
             if (a.dataset.staffTab === panel) a.setAttribute('aria-current', 'page');
             else a.removeAttribute('aria-current');
         });
 
-        if (panel === 'reservations') await renderReservationsPanel(route.params.get('id'));
-        if (panel === 'new') await renderNewPanel();
-        if (panel === 'rooms') await renderRoomsPanel();
-        if (panel === 'events') await renderEventsPanel();
-        if (panel === 'rates') await renderRatesPanel();
-
+        try {
+            if (panel === 'reservations') await renderReservationsPanel(route.params.get('id'));
+            if (panel === 'new') await renderNewPanel();
+            if (panel === 'rooms') await renderRoomsPanel();
+            if (panel === 'events') await renderEventsPanel();
+            if (panel === 'rates') await renderRatesPanel();
+            if (panel === 'employees') await renderEmployeesPanel();
+        } catch (err) {
+            // request() has already switched to the sign-in form for an ended session.
+            if (err.status === 401) return changedView ? null : $('#signin-title');
+            throw err;
+        }
         if (changedView) return null;
         if (panel === 'reservations' && route.params.get('id')) return $('#res-detail h3');
         return $('[data-panel="' + panel + '"] .panel__title');
     }
 
+    // Hides the portal and shows the sign-in form, with an optional message.
+    function showStaffSignIn(message) {
+        $('#staff-portal').hidden = true;
+        $('#staff-session').hidden = true;
+        $('#staff-signin').hidden = false;
+        showNotice($('#si-message'), message || '');
+    }
+
+    // Called by request() on any 401. Clears what the last employee could see, so it
+    // isn't left in the page, and shows the sign-in form if the portal is open.
+    function onStaffSignedOut() {
+        if (staffUser === null) return;
+        staffUser = null;
+        selectedRoom = null;
+        ['#staff-stats', '#res-detail', '#res-table', '#res-count', '#room-grid', '#room-panel', '#room-summary',
+            '#holds-list', '#blocks-list', '#overrides-list', '#rate-preview', '#emp-table', '#emp-status',
+            '#sched-days', '#sched-week', '#er-employee', '#sh-employee'].forEach((sel) => {
+            $(sel).innerHTML = '';
+        });
+        $('#res-pager').hidden = true;
+        schedWeek = null;
+        $$('#staff-portal form').forEach((f) => { f.reset(); clearErrors(f); });
+        if (parseHash().name === 'staff') showStaffSignIn('Your staff session has ended. Please sign in again.');
+    }
+
     function setupStaff() {
+        // Sign-in and sign-out
+        const sf = $('#signin-form');
+        sf.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = $('#si-message');
+            showNotice(message, '');
+            const ok = validate([
+                [sf.email, isEmail],
+                [sf.password, required('Enter your password.')]
+            ]);
+            if (!ok) return;
+            const button = $('button[type="submit"]', sf);
+            button.disabled = true;
+            try {
+                staffUser = await api.signIn(sf.email.value.trim(), sf.password.value);
+            } catch (err) {
+                showNotice(message, err.message);
+                sf.password.value = '';
+                sf.password.focus();
+                return;
+            } finally {
+                button.disabled = false;
+            }
+            sf.reset();
+            router();
+        });
+        $('[data-action="sign-out"]').addEventListener('click', async () => {
+            try {
+                await api.signOut();
+            } catch (err) {
+                window.alert(err.message);
+                return;
+            }
+            onStaffSignedOut();
+            showNotice($('#si-message'), '');
+            $('#signin-title').focus();
+        });
+
         $('[data-action="reset-demo"]').addEventListener('click', async () => {
             if (!window.confirm('Reset all reservations, holds, blocks, and rates to the sample data?')) return;
             try {
@@ -1168,6 +1350,154 @@
             await renderRatesPanel();
             $('#rates-message').textContent = removed;
             of.date.focus();
+        });
+
+        // Employees
+        const isPassword = (v) => (v.length >= 12 ? '' : 'Use at least 12 characters.');
+        const en = $('#emp-new-form');
+        en.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = $('#en-message');
+            showNotice(message, '');
+            const ok = validate([
+                [en.firstName, required('Enter a first name.')],
+                [en.lastName, required('Enter a last name.')],
+                [en.email, isEmail],
+                [en.password, isPassword]
+            ]);
+            if (!ok) return;
+            let employee;
+            try {
+                employee = await api.createEmployee({
+                    firstName: en.firstName.value, lastName: en.lastName.value, email: en.email.value,
+                    password: en.password.value, role: en.role.value
+                });
+            } catch (err) {
+                showNotice(message, err.message);
+                return;
+            }
+            en.reset();
+            await renderEmployeesPanel();
+            $('#emp-status').textContent = 'Added ' + employee.firstName + ' ' + employee.lastName + '. They can sign in now.';
+            $('[data-panel="employees"] .panel__title').focus();
+        });
+        $('#emp-table').addEventListener('click', async (e) => {
+            const button = e.target.closest('[data-action="toggle-employee"], [data-action="toggle-role"]');
+            if (!button) return;
+            const action = button.dataset.action;
+            const name = button.dataset.name;
+            const next = button.dataset.next;
+            if (action === 'toggle-employee' && next === 'inactive' &&
+                !window.confirm('Deactivate ' + name + '? They won’t be able to sign in.')) return;
+            if (action === 'toggle-role' &&
+                !window.confirm(next === 'manager'
+                    ? 'Make ' + name + ' a manager? They’ll be able to manage accounts, the schedule, and sample data.'
+                    : 'Make ' + name + ' staff? They’ll lose manager tools.')) return;
+            let status;
+            try {
+                if (action === 'toggle-employee') {
+                    await api.setEmployeeActive(button.dataset.id, next === 'active');
+                    status = name + (next === 'active' ? ' can sign in again.' : ' is deactivated.');
+                } else {
+                    await api.setEmployeeRole(button.dataset.id, next);
+                    status = name + ' is now ' + (next === 'manager' ? 'a manager.' : 'staff.');
+                }
+            } catch (err) {
+                status = err.message;
+            }
+            await renderEmployeesPanel();
+            $('#emp-status').textContent = status;
+            const again = $('#emp-table [data-action="' + action + '"][data-id="' + button.dataset.id + '"]');
+            (again || $('[data-panel="employees"] .panel__title')).focus();
+        });
+
+        // Schedule
+        $$('[data-week]').forEach((b) => b.addEventListener('click', async () => {
+            const step = b.dataset.week;
+            schedWeek = step === 'this' ? weekStart(todayISO()) : addDays(schedWeek || weekStart(todayISO()), step === 'next' ? 7 : -7);
+            await renderSchedule();
+            if (step === 'this') $('#sched-title').focus();
+        }));
+        const sh = $('#shift-form');
+        sh.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = $('#sh-message');
+            showNotice(message, '');
+            const ok = validate([
+                [sh.employee, required('Choose an employee.')],
+                [sh.date, (v) => (parseISO(v) ? '' : 'Choose a date.')],
+                [sh.start, (v) => (/^\d{2}:\d{2}$/.test(v) ? '' : 'Enter a start time.')],
+                [sh.end, (v) => (!/^\d{2}:\d{2}$/.test(v) ? 'Enter an end time.' : v === sh.start.value ? 'End time can’t equal the start.' : '')]
+            ]);
+            if (!ok) return;
+            let shift;
+            try {
+                shift = await api.createShift({
+                    employeeId: sh.employee.value, date: sh.date.value, start: sh.start.value, end: sh.end.value, note: sh.note.value
+                });
+            } catch (err) {
+                showNotice(message, err.message);
+                return;
+            }
+            // Keep the employee, date, and times for adding the next shift quickly.
+            sh.note.value = '';
+            schedWeek = weekStart(shift.date);
+            await renderSchedule();
+            showNotice(message, 'Added ' + shift.employeeName + ', ' + fmtDate(shift.date, 'day') + ', ' +
+                fmtTime(shift.start) + ' – ' + fmtTime(shift.end) + '.');
+        });
+        $('#sched-days').addEventListener('click', async (e) => {
+            const button = e.target.closest('[data-action="remove-shift"]');
+            if (!button) return;
+            if (!window.confirm('Remove ' + button.dataset.label + '?')) return;
+            let status = 'Shift removed.';
+            try {
+                await api.removeShift(button.dataset.id);
+            } catch (err) {
+                status = err.message;
+            }
+            await renderSchedule();
+            $('#sched-week').textContent += ' ' + status;
+            $('#sched-title').focus();
+        });
+        const er = $('#emp-reset-form');
+        er.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = $('#er-message');
+            showNotice(message, '');
+            const ok = validate([
+                [er.employee, required('Choose an employee.')],
+                [er.password, isPassword]
+            ]);
+            if (!ok) return;
+            const name = er.employee.selectedOptions[0].textContent;
+            try {
+                await api.setEmployeePassword(er.employee.value, er.password.value);
+            } catch (err) {
+                showNotice(message, err.message);
+                return;
+            }
+            er.password.value = '';
+            showNotice(message, 'New password set for ' + name + '.');
+        });
+        const eo = $('#emp-own-form');
+        eo.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = $('#eo-message');
+            showNotice(message, '');
+            const ok = validate([
+                [eo.currentPassword, required('Enter your current password.')],
+                [eo.newPassword, isPassword]
+            ]);
+            if (!ok) return;
+            try {
+                await api.changePassword(eo.currentPassword.value, eo.newPassword.value);
+            } catch (err) {
+                showNotice(message, err.message);
+                return;
+            }
+            eo.reset();
+            showNotice(message, 'Password changed. You’re still signed in here; other devices will need the new one.');
         });
     }
 
@@ -1536,6 +1866,87 @@
                     '<td data-label="Master suites">' + money(p.suite.amount) + '</td></tr>').join('') +
                 '</tbody>' +
             '</table>';
+    }
+
+    /* Employees panel */
+
+    // Monday of the schedule week on screen; null shows this week.
+    let schedWeek = null;
+
+    async function renderEmployeesPanel() {
+        const [employees] = await Promise.all([api.getEmployees(), renderSchedule()]);
+        const name = (p) => p.firstName + ' ' + p.lastName;
+        const manager = isManager();
+        $('#emp-status').textContent = plural(employees.filter((p) => p.active).length, 'active employee');
+        $('#emp-table').innerHTML =
+            '<table class="data-table">' +
+                '<caption class="visually-hidden">Staff accounts</caption>' +
+                '<thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Role</th><th scope="col">Last signed in</th>' +
+                '<th scope="col">Status</th>' + (manager ? '<th scope="col"><span class="visually-hidden">Actions</span></th>' : '') + '</tr></thead>' +
+                '<tbody>' + employees.map((p) => {
+                    const self = p.id === staffUser.id;
+                    const button = (action, next, label) =>
+                        '<button type="button" class="btn-text" data-action="' + action + '" data-id="' + p.id + '"' +
+                        ' data-name="' + esc(name(p)) + '" data-next="' + next + '">' + label +
+                        '<span class="visually-hidden"> ' + esc(name(p)) + '</span></button>';
+                    return '<tr>' +
+                        '<td data-label="Name">' + esc(name(p)) + (self ? ' <span class="fine-print">(you)</span>' : '') + '</td>' +
+                        '<td data-label="Email">' + esc(p.email) + '</td>' +
+                        '<td data-label="Role">' + (p.role === 'manager' ? 'Manager' : 'Staff') + '</td>' +
+                        '<td data-label="Last signed in">' + (p.lastSignedInAt ? esc(fmtTimestamp(p.lastSignedInAt)) : 'Never') + '</td>' +
+                        '<td data-label="Status">' + (p.active ? '<span class="badge">Active</span>' : '<span class="badge badge--muted">Inactive</span>') + '</td>' +
+                        (manager ? '<td data-label="Actions">' + (self ? '' :
+                            '<span class="inline-actions inline-actions--tight">' +
+                                button('toggle-role', p.role === 'manager' ? 'staff' : 'manager', p.role === 'manager' ? 'Make staff' : 'Make manager') +
+                                button('toggle-employee', p.active ? 'inactive' : 'active', p.active ? 'Deactivate' : 'Reactivate') +
+                            '</span>') + '</td>' : '') +
+                    '</tr>';
+                }).join('') +
+                '</tbody>' +
+            '</table>';
+
+        if (!manager) return;
+        const fill = (select, people, empty, suffix) => {
+            const previous = select.value;
+            select.innerHTML = people.length
+                ? people.map((p) => '<option value="' + p.id + '">' + esc(name(p)) + (suffix ? suffix(p) : '') + '</option>').join('')
+                : '<option value="">' + empty + '</option>';
+            if (people.some((p) => String(p.id) === previous)) select.value = previous;
+        };
+        fill($('#er-employee'), employees.filter((p) => p.id !== staffUser.id), 'No other employees yet', (p) => (p.active ? '' : ' (inactive)'));
+        fill($('#sh-employee'), employees.filter((p) => p.active), 'No active employees');
+        if (!$('#sh-date').value) $('#sh-date').value = todayISO();
+    }
+
+    // One week of shifts, Monday to Sunday, as a list per day.
+    async function renderSchedule() {
+        if (!schedWeek) schedWeek = weekStart(todayISO());
+        const week = schedWeek;
+        const shifts = await api.getShifts(week, 7);
+        if (week !== schedWeek) return;   // a newer week was asked for meanwhile
+
+        const end = addDays(week, 6);
+        $('#sched-week').textContent = (week === weekStart(todayISO()) ? 'This week: ' : 'Week of ') +
+            fmtDate(week, 'short') + ' – ' + fmtDate(end, 'short') + ' · ' + plural(shifts.length, 'shift');
+        const today = todayISO();
+        $('#sched-days').innerHTML = Array.from({ length: 7 }, (_, i) => addDays(week, i)).map((day) => {
+            const items = shifts.filter((s) => s.date === day);
+            return '<h4 class="label-heading section-gap">' + esc(fmtDate(day, 'day')) + (day === today ? ' · Today' : '') + '</h4>' +
+                (items.length
+                    ? '<ul class="line-list">' + items.map((s) => {
+                        const hours = fmtTime(s.start) + ' – ' + fmtTime(s.end) + (s.overnight ? ' (next day)' : '');
+                        const who = s.employeeName + (s.employeeId === staffUser.id ? ' (you)' : '') + (s.employeeActive ? '' : ' (inactive)');
+                        return '<li><div><strong>' + esc(hours) + '</strong> · ' + esc(who) +
+                            (s.note ? '<p class="fine-print">' + esc(s.note) + '</p>' : '') + '</div>' +
+                            (isManager()
+                                ? '<button type="button" class="btn-text" data-action="remove-shift" data-id="' + esc(s.id) + '"' +
+                                  ' data-label="' + esc(s.employeeName + '’s shift on ' + fmtDate(day, 'day') + ', ' + hours) + '">Remove' +
+                                  '<span class="visually-hidden"> ' + esc(s.employeeName + '’s shift, ' + hours) + '</span></button>'
+                                : '') +
+                        '</li>';
+                    }).join('') + '</ul>'
+                    : '<p class="empty">No one scheduled.</p>');
+        }).join('');
     }
 
     /* ---------- Druid AI Assistant (concierge widget) ---------- */

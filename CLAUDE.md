@@ -47,9 +47,15 @@ The AI concierge is part of the API (`POST api/concierge`). It needs `ANTHROPIC_
 .env.example                  Variable names with placeholders (committed)
 .github/workflows/deploy-azure.yml   Publish and deploy to Azure App Service on push to main
 API/                          ASP.NET Core Web API (.NET 10, controllers); also serves Client/
-├── Controllers/              One controller per resource (rooms, rates, reservations, holds, blocks, demo)
+├── Controllers/              One controller per resource (rooms, rates, reservations, holds, blocks, demo, auth, employees, shifts)
 ├── Models/HotelModels.cs     Response shapes and request bodies
+├── Models/EmployeeModels.cs  Staff account shapes and request bodies
 ├── Services/HotelStore.cs    All booking, availability, and pricing rules, on MySQL (Dapper)
+├── Services/EmployeeStore.cs Staff accounts, roles, and sign-in rules
+├── Services/ShiftStore.cs    Staff shift schedule rules
+├── Services/StaffSession.cs  Sign-in cookie setup and the per-minute session re-check
+├── Services/PasswordHasher.cs   PBKDF2-SHA256 password hashes
+├── Services/AddEmployeeCommand.cs   `dotnet run --project API -- add-employee` (first account)
 ├── Services/HotelRuleExceptionFilter.cs   Rule errors → 400/404, database errors → friendly 503
 ├── Services/DotEnv.cs        Loads the repo-root .env at startup
 ├── Controllers/ConciergeController.cs   POST api/concierge (streams NDJSON, rate limited)
@@ -101,12 +107,13 @@ Client/
 - **The database never stores card data.** The payment rule above applies to the database too: store only paid/not-paid status and the card-on-file opt-in.
 - **Availability is calculated, not stored:** from booking, `maintenance_block` (holds), and event block overlaps. Writes that take a room lock the room rows (`SELECT ... FOR UPDATE`) and re-check overlaps in one transaction, so the same room can't be booked twice.
 - **Seed data:** `seed.sql` loads the hotel, room types, and 120 rooms. "Reset sample data" (`POST api/demo/reset`) clears bookings, guests, holds, blocks, and special rates, restores default rates, and writes the sample data as `druid_app`.
-- **Reset is destructive once data persists.** It only runs in Development or while the server has `ALLOW_SAMPLE_RESET=true`; otherwise it returns 403. Keep it that way until staff sign-in exists.
+- **Reset is destructive once data persists.** It needs a signed-in manager, and it only runs in Development or while the server has `ALLOW_SAMPLE_RESET=true`; otherwise it returns 403. It never touches the `employee` table.
 - **Use hotel-local time for "today".** The hotel is in Tuscaloosa (`America/Chicago`) and Azure runs on UTC. Business dates (past-arrival checks, hold/block filters, sample-data dates) use `HotelStore.Today()`, never `DateTime.Now` or `DateTime.Today`.
 - **Guest records aren't rewritten by bookings.** `guest` is one row per email from the first booking; each `booking` keeps its own `guest_first_name` / `guest_last_name` / `guest_phone`, and staff screens read those. A booking with an existing email must not change another reservation's contact details.
 - **Validate every date range on the server:** checkout after checkin, a maximum stay length, and inactive rooms excluded, on every endpoint that takes dates (including the single-room check), not just search and booking.
 - **Writes must report what actually happened.** If an UPDATE affects 0 rows, return an error instead of 200. Repeat actions, such as cancelling a booking that is already cancelled, must not add duplicate side effects like log messages.
 - **Staff lists must scale with persisted data.** Filter by date or status, or page the results. Don't load every booking ever stored.
+- **Accounts:** `dotnet run --project API -- add-employee` creates a Staff Portal account in whatever database `DB_APP_CONNECTION` points at (needed once per database; after that, use the Employees tab).
 - **One copy of write logic.** Sample-data seeding should reuse `HotelStore`'s insert and rate functions, not keep its own copies.
 - **Schema changes:** update `schema.sql` (fresh installs) and add a numbered `migrate-NNN-*.sql` for existing databases, including the Azure one.
 - **Hotel facts: the database wins.** When `hotel-info.json` or the concierge's knowledge documents disagree with the database (for example `hotel` check-in/out times, `room_type` sizes, occupancy, and rates), treat the database as correct and update the JSON and documents to match. Facts the database doesn't hold (taxes, policies, amenities, address) stay TODO until Mr. Rogers confirms them.
@@ -191,7 +198,16 @@ Every item must remain covered:
 - Block off rooms for events
 - View and edit cost data and default rates
 
-The portal currently has no sign-in (see README assumptions). With a real backend and database, staff endpoints are exposed over the network, so staff authentication should be raised with Mr. Rogers before launch.
+**Staff sign-in** (README assumptions 30–33, pending Mr. Rogers): employees sign in with email and password; the Employees tab (`#/staff/employees`) has the week's shift schedule and manages accounts.
+
+- **Roles:** `manager` or `staff` (`EmployeeStore.Manager` / `Staff`). Manager-only endpoints use `[Authorize(Roles = EmployeeStore.Manager)]`: account changes, shift changes, and Reset sample data. The client hides `[data-manager-only]` controls for staff, but the API is what enforces it. A manager can't change their own role or deactivate themselves.
+- **Shifts** live in `ShiftStore` (`shift` table, ids `S-n`). Adding one locks the employee row and re-checks overlaps in one transaction, like bookings. An end time earlier than the start means overnight.
+
+- **Endpoints are staff only by default.** `Program.cs` sets an authorization fallback policy, so every endpoint needs a signed-in employee unless it has `[AllowAnonymous]`. Only mark an endpoint anonymous if the guest site needs it, and never for anything returning guest data.
+- Staff-only options on anonymous endpoints (`source: "staff"`, `allowPast`) are honored only when `User.Identity.IsAuthenticated`; the controller decides, not the request body.
+- Passwords are hashed with `PasswordHasher` (PBKDF2-SHA256) and never logged or returned. The session is the `druid_staff` HttpOnly, SameSite=Strict cookie; the browser never sees a token.
+- The `employee` table is never exposed to `druid_llm_ro` or any `v_*` view.
+- In the client, any 401 calls `onStaffSignedOut()`, which clears staff data from the page and shows the sign-in form.
 
 ## Design
 
