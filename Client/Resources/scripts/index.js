@@ -933,7 +933,7 @@
         if (!r) {
             // Reloaded or opened from a link: the details aren't kept in the browser.
             body.innerHTML = '<p class="lede">' + (id ? 'Your confirmation code is <strong>' + esc(id) + '</strong>. ' : '') +
-                'The details of your stay are in your confirmation email.</p>' +
+                'Keep it handy, and call the front desk if you need to look up or change your stay.</p>' +
                 '<div class="form-actions"><a class="btn btn--ghost" href="#/home">Back to the hotel</a></div>';
             return;
         }
