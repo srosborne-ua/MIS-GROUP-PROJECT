@@ -891,6 +891,8 @@ input[type="checkbox"] {
     gap: 1rem 2rem;
 }
 
+.room-type__fact--wide { grid-column: 1 / -1; }
+
 .room-type__facts dt {
     font-size: 0.75rem;
     letter-spacing: 0.12em;

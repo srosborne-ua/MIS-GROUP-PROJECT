@@ -1174,21 +1174,27 @@
         const order = Object.keys(rates).concat(Object.keys(ROOM_TYPES).filter((key) => !rates[key]));
         $('[data-room-types]').innerHTML = order.map((key) => {
             const t = ROOM_TYPES[key];
-            const from = rates[key] ? Math.min(rates[key].weekday, rates[key].weekend) : 0;
+            const rate = rates[key];
             const photo = ROOM_PHOTOS[key];
             return '<article class="room-type">' +
                 (photo ? '<img class="room-type__image" src="Resources/images/' + photo[0] + '" alt="' + esc(photo[1]) + '" loading="lazy">' : '') +
                 '<h2 class="room-type__name">' + esc(t.name) + '</h2>' +
                 '<p class="room-type__blurb">' + esc(t.blurb) + '</p>' +
                 '<dl class="room-type__facts">' +
-                    '<div><dt>Bed</dt><dd>' + esc(t.bedLabel) + '</dd></div>' +
+                    '<div class="room-type__fact--wide"><dt>Bed</dt><dd>' + esc(t.bedLabel) + '</dd></div>' +
                     '<div><dt>Sleeps</dt><dd>' + t.sleeps + '</dd></div>' +
                     '<div><dt>Size</dt><dd>' + esc(t.size) + '</dd></div>' +
-                    '<div><dt>From</dt><dd>' + money(from) + ' / night</dd></div>' +
+                    (rate
+                        ? '<div><dt>Weeknights</dt><dd>' + money(rate.weekday) + ' / night</dd></div>' +
+                          '<div><dt>Fri &amp; Sat</dt><dd>' + money(rate.weekend) + ' / night</dd></div>'
+                        : '') +
                 '</dl>' +
                 '<p class="fine-print">' + plural(counts[key], 'room') + ' of this kind</p>' +
             '</article>';
-        }).join('') + '<p><a class="btn" href="#/search">Check availability</a></p>';
+        }).join('') +
+            '<p class="fine-print">Prices are before taxes. Special dates, such as home game weekends, may be priced differently; ' +
+            'you’ll see your exact total when you choose dates.</p>' +
+            '<p><a class="btn" href="#/search">Check availability</a></p>';
         const amounts = Object.values(rates).flatMap((r) => [r.weekday, r.weekend]);
         $('[data-rate-fact]').textContent = money(Math.min(...amounts)) + ' to ' + money(Math.max(...amounts)) +
             ' a night, by room; Friday and Saturday nights cost a little more';
