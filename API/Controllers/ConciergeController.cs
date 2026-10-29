@@ -1,6 +1,7 @@
 using System.Text.Json;
 using API.Concierge;
 using API.Models;
+using API.Services;
 using Anthropic.Exceptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,10 +11,12 @@ namespace API.Controllers;
 
 // Druid AI Assistant. Streams the reply as newline-delimited JSON events:
 // { "type": "text", "text": "..." } | { "type": "reset" } | { "type": "done" } | { "type": "error", "message": "..." }
+// | { "type": "proposal", "proposal": { ... } }   a booking card to confirm (BookingProposals.cs)
+// | { "type": "sign_in" }                         booking needs the guest to sign in first
 [ApiController]
 [Route("api/concierge")]
-[AllowAnonymous]
-public class ConciergeController(ConciergeService concierge, ConciergeLimits limits, ILogger<ConciergeController> logger) : ControllerBase
+public class ConciergeController(ConciergeService concierge, ConciergeLimits limits, BookingProposals proposals,
+    ILogger<ConciergeController> logger) : ControllerBase
 {
     private const string FriendlyError = "Sorry, I'm having trouble answering right now. Please try again in a moment, or call the front desk.";
     private const string RefusalMessage = "I'm sorry, I can't help with that. I'm happy to answer questions about your stay or booking.";
@@ -22,6 +25,7 @@ public class ConciergeController(ConciergeService concierge, ConciergeLimits lim
 
     // POST api/concierge
     [HttpPost]
+    [AllowAnonymous]
     [EnableRateLimiting("concierge")]
     [RequestSizeLimit(32 * 1024)]
     public async Task Ask(ConciergeRequest input)
@@ -57,7 +61,9 @@ public class ConciergeController(ConciergeService concierge, ConciergeLimits lim
 
         try
         {
-            await Stream(input.Page, messages);
+            // The guest session, if any, so propose_booking knows who would be booking.
+            var guest = await GuestSession.CurrentAsync(HttpContext);
+            await Stream(ConciergePrompt.NormalizePage(input.Page), guest, messages);
         }
         finally
         {
@@ -65,7 +71,27 @@ public class ConciergeController(ConciergeService concierge, ConciergeLimits lim
         }
     }
 
-    private async Task Stream(string? page, List<Anthropic.Models.Beta.Messages.BetaMessageParam> messages)
+    // POST api/concierge/bookings: the guest pressed Confirm booking on a card in the chat.
+    // Only this button books; the model can't call it. A room taken (or repriced) since the
+    // card was shown returns 409 with a fresh card (same room at the new price, or the same kind of room).
+    [HttpPost("bookings")]
+    [Authorize(AuthenticationSchemes = GuestSession.Scheme)]
+    [EnableRateLimiting("booking")]
+    public async Task<ActionResult<Reservation>> ConfirmBooking(ConfirmBookingRequest input)
+    {
+        var guest = GuestSession.Current(User);
+        try
+        {
+            return await proposals.ConfirmAsync(guest, input.Token);
+        }
+        catch (BookingConflictException ex)
+        {
+            var (message, proposal) = await proposals.AfterConflictAsync(guest, input.Token, ex.Message);
+            return Conflict(new { message, proposal });
+        }
+    }
+
+    private async Task Stream(string page, GuestAccount? guest, List<Anthropic.Models.Beta.Messages.BetaMessageParam> messages)
     {
         Response.ContentType = "application/x-ndjson; charset=utf-8";
         Response.Headers.CacheControl = "no-store";
@@ -79,7 +105,8 @@ public class ConciergeController(ConciergeService concierge, ConciergeLimits lim
 
         try
         {
-            var status = await concierge.Run(messages, page ?? "main",
+            var context = new ConciergeContext(page, guest, Send);
+            var status = await concierge.Run(messages, context,
                 text => Send(new { type = "text", text }),
                 () => Send(new { type = "reset" }),
                 aborted);

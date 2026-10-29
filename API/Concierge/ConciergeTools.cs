@@ -1,4 +1,5 @@
 using System.Text.Json;
+using API.Models;
 using Anthropic.Models.Beta.Messages;
 
 namespace API.Concierge;
@@ -6,20 +7,29 @@ namespace API.Concierge;
 // A tool the concierge can call. Run() must go through the same services the
 // controllers use (e.g. HotelStore), never write data directly from model output,
 // and anything that creates, changes, or cancels a booking must require explicit
-// guest or staff confirmation before it runs.
+// guest or staff confirmation before it runs (see ProposeBookingTool: the model only
+// proposes; the guest's own button press books).
 public interface IConciergeTool
 {
     BetaTool Definition { get; }   // name, description, input schema (set Strict = true)
-    Task<object> Run(IReadOnlyDictionary<string, JsonElement> input, string page);
+    Task<object> Run(IReadOnlyDictionary<string, JsonElement> input, ConciergeContext context);
 }
+
+// What a tool knows about the request:
+//   Page  - the site section ("main", "booking", or "staff")
+//   Guest - the signed-in guest account from the druid_guest cookie, or null
+//   Emit  - sends an event to the browser outside the reply text, such as the booking
+//           card with its Confirm button. The model never sees what is emitted.
+public record ConciergeContext(string Page, GuestAccount? Guest, Func<object, Task> Emit);
 
 // Thrown by a tool for a failure the model should see. The message is sent to the
 // model as-is, so it must never include SQL, stack traces, or connection details.
 public class ConciergeToolException(string message) : Exception(message);
 
-// Tool registry. check_availability (AvailabilityTool.cs) is always registered; the
-// database query tools (KnowledgeTools.cs) are registered when DB_LLM_RO_CONNECTION is
-// set; otherwise the concierge answers hotel facts from hotel-info.json in its prompt.
+// Tool registry. check_availability (AvailabilityTool.cs) and propose_booking
+// (BookingTool.cs) are always registered; the database query tools (KnowledgeTools.cs)
+// are registered when DB_LLM_RO_CONNECTION is set; otherwise the concierge answers hotel
+// facts from hotel-info.json in its prompt.
 //
 // To add a tool, implement IConciergeTool and register it in Program.cs:
 //     builder.Services.AddSingleton<IConciergeTool, CheckAvailabilityTool>();
@@ -32,13 +42,13 @@ public class ConciergeTools(IEnumerable<IConciergeTool> tools, ILogger<Concierge
 
     public List<BetaToolUnion> Definitions() => _tools.Select(t => (BetaToolUnion)t.Definition).ToList();
 
-    public async Task<(string Content, bool IsError)> Run(string name, IReadOnlyDictionary<string, JsonElement> input, string page)
+    public async Task<(string Content, bool IsError)> Run(string name, IReadOnlyDictionary<string, JsonElement> input, ConciergeContext context)
     {
         var tool = _tools.FirstOrDefault(t => t.Definition.Name == name);
         if (tool is null) return ("Unknown tool: " + name, true);
         try
         {
-            return (JsonSerializer.Serialize(await tool.Run(input, page)), false);
+            return (JsonSerializer.Serialize(await tool.Run(input, context)), false);
         }
         catch (ConciergeToolException ex)
         {

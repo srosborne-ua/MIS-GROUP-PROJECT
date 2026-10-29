@@ -24,6 +24,7 @@
             <ul class="site-nav__list">
                 <li><a href="#/home" data-nav="home">The Hotel</a></li>
                 <li><a href="#/rooms" data-nav="rooms">Rooms &amp; Amenities</a></li>
+                <li><a href="#/account" data-nav="account" data-account-link>Sign in</a></li>
                 <li><a href="#/search" data-nav="search" class="site-nav__cta">Book a stay</a></li>
             </ul>
         </nav>
@@ -195,6 +196,17 @@
                     <div id="booking-summary"></div>
                 </aside>
 
+                <div id="booking-signin" class="checkout__form" hidden>
+                    <h2 class="label-heading">Sign in to book</h2>
+                    <p class="lede">Reservations are kept under a hotel account, so only you can see your stays.
+                        Sign in, or create an account in a minute, and you’ll come straight back here.</p>
+                    <p class="fine-print">Rooms aren’t held until you confirm, so the sooner the better on a busy weekend.</p>
+                    <div class="form-actions">
+                        <a class="btn" id="booking-signin-link" href="#/account">Sign in or create an account</a>
+                        <a class="link-arrow link-arrow--back" data-booking-back href="#/search">Choose a different room</a>
+                    </div>
+                </div>
+
                 <form id="booking-form" class="checkout__form" novalidate aria-labelledby="booking-title">
                     <fieldset class="fieldset">
                         <legend>Guest</legend>
@@ -209,7 +221,8 @@
                             </div>
                             <div class="field">
                                 <label for="bk-email">Email</label>
-                                <input type="email" id="bk-email" name="email" autocomplete="email" required>
+                                <input type="email" id="bk-email" name="email" autocomplete="email" readonly aria-describedby="bk-email-hint">
+                                <p id="bk-email-hint" class="hint">Reservations are kept under your account email.</p>
                             </div>
                             <div class="field">
                                 <label for="bk-phone">Mobile phone</label>
@@ -277,7 +290,7 @@
 
                     <div class="form-actions">
                         <button type="submit" class="btn" id="booking-submit">Confirm reservation</button>
-                        <a class="link-arrow link-arrow--back" id="booking-back" href="#/search">Choose a different room</a>
+                        <a class="link-arrow link-arrow--back" id="booking-back" data-booking-back href="#/search">Choose a different room</a>
                     </div>
                 </form>
             </div>
@@ -293,6 +306,145 @@
             <h1 id="confirmation-title" class="display" tabindex="-1">We'll leave the light on.</h1>
         </div>
         <div class="container" id="confirmation-body"></div>
+    </section>
+
+    <!-- ============================================================
+         Pay now: pay for a booked stay by card (from the confirmation
+         page, Your stays, or a booked concierge card)
+         ============================================================ -->
+    <section class="view" data-view="pay" aria-labelledby="pay-title" hidden>
+        <div class="container page-head">
+            <p class="eyebrow">Payment</p>
+            <h1 id="pay-title" class="display" tabindex="-1">Settle up, then relax.</h1>
+        </div>
+
+        <div class="container">
+            <div id="pay-notice" class="notice" role="alert" tabindex="-1" hidden></div>
+
+            <div id="pay-layout" class="checkout" hidden>
+                <aside class="checkout__summary" aria-labelledby="pay-summary-title">
+                    <h2 id="pay-summary-title" class="label-heading">Your stay</h2>
+                    <div id="pay-summary"></div>
+                </aside>
+
+                <form id="pay-form" class="checkout__form" novalidate aria-labelledby="pay-title">
+                    <fieldset class="fieldset">
+                        <legend>Card</legend>
+                        <div class="card-fields">
+                            <div class="field">
+                                <label for="pay-card-name">Name on card</label>
+                                <input type="text" id="pay-card-name" name="cardName" autocomplete="cc-name" required>
+                            </div>
+                            <div class="field">
+                                <label for="pay-card-number">Card number</label>
+                                <input type="text" id="pay-card-number" name="cardNumber" inputmode="numeric"
+                                       autocomplete="cc-number" maxlength="23" required>
+                            </div>
+                            <div class="grid-3">
+                                <div class="field">
+                                    <label for="pay-card-exp">Expires <span class="optional">MM/YY</span></label>
+                                    <input type="text" id="pay-card-exp" name="cardExp" inputmode="numeric"
+                                           autocomplete="cc-exp" maxlength="7" placeholder="MM/YY" required>
+                                </div>
+                                <div class="field">
+                                    <label for="pay-card-cvc">Security code</label>
+                                    <input type="text" id="pay-card-cvc" name="cardCvc" inputmode="numeric"
+                                           autocomplete="cc-csc" maxlength="4" required>
+                                </div>
+                                <div class="field">
+                                    <label for="pay-card-zip">Billing ZIP</label>
+                                    <input type="text" id="pay-card-zip" name="cardZip" inputmode="numeric"
+                                           autocomplete="postal-code" maxlength="5" required>
+                                </div>
+                            </div>
+                            <label class="check">
+                                <input type="checkbox" name="cardOnFile" id="pay-card-on-file">
+                                <span>Keep this card on file for incidentals and future stays. <span class="optional">Optional</span></span>
+                            </label>
+                        </div>
+                        <p class="fine-print">Prototype checkout: card details are checked in your browser only and are never stored or sent.</p>
+                    </fieldset>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn" id="pay-submit">Pay now</button>
+                        <a class="link-arrow link-arrow--back" id="pay-back" href="#/account">Pay at check-in instead</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============================================================
+         Guest account: sign in, create an account, and your stays
+         ============================================================ -->
+    <section class="view" data-view="account" aria-labelledby="account-title" hidden>
+        <div class="container page-head">
+            <p class="eyebrow">Your account</p>
+            <h1 id="account-title" class="display" tabindex="-1">Your stays.</h1>
+            <p id="account-lede" class="lede measure"></p>
+        </div>
+
+        <div class="container">
+            <div id="account-signed-out" class="account-forms" hidden>
+                <form id="guest-signin-form" class="staff-form" novalidate aria-labelledby="gs-title">
+                    <h2 id="gs-title" class="panel__title" tabindex="-1">Sign in</h2>
+                    <div class="field">
+                        <label for="gs-email">Email</label>
+                        <input type="email" id="gs-email" name="email" autocomplete="username" required>
+                    </div>
+                    <div class="field">
+                        <label for="gs-password">Password</label>
+                        <input type="password" id="gs-password" name="password" autocomplete="current-password" required>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn">Sign in</button>
+                    </div>
+                    <p id="gs-message" class="notice" role="alert" hidden></p>
+                </form>
+
+                <form id="guest-register-form" class="staff-form" novalidate aria-labelledby="gr-title">
+                    <h2 id="gr-title" class="panel__title" tabindex="-1">New here? Create an account</h2>
+                    <div class="grid-2">
+                        <div class="field">
+                            <label for="gr-first">First name</label>
+                            <input type="text" id="gr-first" name="firstName" autocomplete="given-name" required>
+                        </div>
+                        <div class="field">
+                            <label for="gr-last">Last name</label>
+                            <input type="text" id="gr-last" name="lastName" autocomplete="family-name" required>
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="gr-email">Email</label>
+                        <input type="email" id="gr-email" name="email" autocomplete="email" required>
+                    </div>
+                    <div class="field">
+                        <label for="gr-phone">Mobile phone</label>
+                        <input type="tel" id="gr-phone" name="phone" autocomplete="tel" required>
+                    </div>
+                    <div class="field">
+                        <label for="gr-password">Password</label>
+                        <input type="password" id="gr-password" name="password" autocomplete="new-password" required aria-describedby="gr-password-hint">
+                        <p id="gr-password-hint" class="hint">At least 8 characters.</p>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn--ghost">Create account</button>
+                    </div>
+                    <p id="gr-message" class="notice" role="alert" hidden></p>
+                </form>
+            </div>
+
+            <div id="account-signed-in" hidden>
+                <p class="fine-print">Signed in as <span id="account-who"></span>.
+                    <button type="button" class="btn-text" data-action="guest-sign-out">Sign out</button></p>
+                <p id="account-status" class="status-line" role="status" aria-live="polite"></p>
+                <h2 class="label-heading section-gap">Upcoming</h2>
+                <div id="account-upcoming"></div>
+                <h2 class="label-heading section-gap">Past and cancelled</h2>
+                <div id="account-past"></div>
+                <p class="fine-print section-gap">To change or cancel a stay, call the front desk.</p>
+            </div>
+        </div>
     </section>
 
     <!-- ============================================================
@@ -786,7 +938,7 @@
         <ol class="concierge__log" data-concierge-log aria-live="polite" aria-label="Conversation">
             <li class="concierge__msg concierge__msg--assistant">
                 <span class="visually-hidden">Druid AI Assistant: </span>
-                <p class="concierge__text">Welcome. How can I help with your stay? I can answer questions about our rooms, rates, and policies, or walk you through booking.</p>
+                <p class="concierge__text">Welcome. How can I help with your stay? I can answer questions about our rooms, rates, and policies, find you a room, and book it for you.</p>
             </li>
         </ol>
 

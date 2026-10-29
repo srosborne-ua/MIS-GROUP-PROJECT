@@ -81,12 +81,32 @@ CREATE TABLE guest (
     UNIQUE KEY uq_guest_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- Guest sign-in. Guests need an account to book on the site or through the concierge.
+-- password_hash is PBKDF2-SHA256 (API/Services/PasswordHasher.cs). Separate from guest
+-- (contact details per email), with no link between the two: emails aren't verified,
+-- so an account only ever sees the bookings made from it (booking.guest_account_id).
+-- Accounts survive "Reset sample data". No v_* view exposes this table.
+CREATE TABLE guest_account (
+    id                 INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    first_name         VARCHAR(60)  NOT NULL,
+    last_name          VARCHAR(60)  NOT NULL,
+    email              VARCHAR(254) NOT NULL,
+    phone              VARCHAR(30)  NOT NULL,
+    password_hash      VARCHAR(255) NOT NULL,
+    last_signed_in_at  DATETIME NULL,
+    created_at         DATETIME NOT NULL,
+    updated_at         DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_guest_account_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 -- The API shows booking ids as 'DC-' + id.
 CREATE TABLE booking (
     id                INT UNSIGNED NOT NULL AUTO_INCREMENT,
     room_id           INT UNSIGNED NOT NULL,
     room_type_id      INT UNSIGNED NOT NULL,          -- type at time of booking
     guest_id          INT UNSIGNED NOT NULL,
+    guest_account_id  INT UNSIGNED NULL,              -- the account that booked; NULL for staff bookings
     guest_first_name  VARCHAR(60)  NOT NULL,          -- contact details as entered for this booking
     guest_last_name   VARCHAR(60)  NOT NULL,
     guest_phone       VARCHAR(30)  NOT NULL,
@@ -102,9 +122,11 @@ CREATE TABLE booking (
     PRIMARY KEY (id),
     KEY ix_booking_overlap (room_id, status, check_in, check_out),
     KEY ix_booking_guest (guest_id),
+    KEY ix_booking_guest_account (guest_account_id, check_in),
     CONSTRAINT fk_booking_room FOREIGN KEY (room_id) REFERENCES room (id) ON DELETE RESTRICT,
     CONSTRAINT fk_booking_room_type FOREIGN KEY (room_type_id) REFERENCES room_type (id) ON DELETE RESTRICT,
     CONSTRAINT fk_booking_guest FOREIGN KEY (guest_id) REFERENCES guest (id) ON DELETE RESTRICT,
+    CONSTRAINT fk_booking_guest_account FOREIGN KEY (guest_account_id) REFERENCES guest_account (id) ON DELETE RESTRICT,
     CONSTRAINT chk_booking_dates CHECK (check_out > check_in),
     CONSTRAINT chk_booking_guests CHECK (guest_count >= 1),
     CONSTRAINT chk_booking_total CHECK (total >= 0)
@@ -122,7 +144,7 @@ CREATE TABLE booking_night (
     CONSTRAINT chk_booking_night_amount CHECK (amount >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- Guest communication log (simulated emails and staff notes).
+-- Guest communication log (simulated emails, staff notes, and concierge bookings).
 CREATE TABLE booking_message (
     id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
     booking_id  INT UNSIGNED NOT NULL,
@@ -169,7 +191,7 @@ CREATE TABLE seasonal_rate (
     CONSTRAINT chk_seasonal_rate_amount CHECK (nightly_rate > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- Not used by the app yet (pending Mr. Rogers' confirmation of amenities).
+-- Not used by the app yet (amenities are still TODO).
 CREATE TABLE amenity (
     id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
     name         VARCHAR(80)  NOT NULL,
@@ -239,7 +261,7 @@ CREATE TABLE event_block_room (
 
 -- Hotel reference documents the Druid AI Assistant searches to answer guest
 -- questions (RAG). Facts come from API/Concierge/hotel-info.json; anything not yet
--- confirmed by Mr. Rogers is written as TODO, and the concierge treats it as unknown.
+-- known yet is written as TODO, and the concierge treats it as unknown.
 CREATE TABLE knowledge_document (
     id       INT NOT NULL AUTO_INCREMENT,
     title    VARCHAR(255) NOT NULL,

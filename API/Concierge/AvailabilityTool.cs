@@ -7,8 +7,9 @@ namespace API.Concierge;
 
 // check_availability: open rooms and exact totals for a stay, from the same
 // HotelStore search the booking page uses, so prices include weekend nights and
-// special rates exactly as a guest would see them. Read-only; it never holds or
-// books a room.
+// special rates exactly as a guest would see them, plus the room the site would
+// offer first for each type. Read-only; it never holds or books a room
+// (propose_booking does the booking, with the guest's confirmation).
 public class CheckAvailabilityTool(HotelStore store) : IConciergeTool
 {
     public BetaTool Definition { get; } = new()
@@ -19,7 +20,7 @@ public class CheckAvailabilityTool(HotelStore store) : IConciergeTool
             "booking rules (weekend nights, special rates, holds, event blocks, existing reservations). Use it whenever a " +
             "guest asks what is available or what a stay would cost on specific dates. Dates are YYYY-MM-DD; checkout is the " +
             "morning they leave. Returns each room type with its open room numbers, the total for the whole stay, and the price " +
-            "of each night. It does not hold or book anything.",
+            "of each night, and suggested_room: the room to offer the guest (highest open floor). It does not hold or book anything.",
         InputSchema = KnowledgeSchemas.Object(new
         {
             checkin = new { type = "string", description = "Arrival date, YYYY-MM-DD." },
@@ -31,7 +32,7 @@ public class CheckAvailabilityTool(HotelStore store) : IConciergeTool
         Strict = true
     };
 
-    public async Task<object> Run(IReadOnlyDictionary<string, JsonElement> input, string page)
+    public async Task<object> Run(IReadOnlyDictionary<string, JsonElement> input, ConciergeContext context)
     {
         string? Text(string key) => input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
         var query = new AvailabilityQuery
@@ -67,11 +68,12 @@ public class CheckAvailabilityTool(HotelStore store) : IConciergeTool
                 type = x.Type,
                 name = types.TryGetValue(x.Type, out var t) ? t.Name : x.Type,
                 rooms_available = x.Rooms.Count,
+                suggested_room = new { number = x.Suggested.Number, floor = x.Suggested.Floor },
                 room_numbers = x.Rooms.Select(r => r.Number),
                 total = x.Quote.Total,
                 nights = x.Quote.Nights.Select(night => new { date = night.Date, amount = night.Amount, kind = night.Kind, label = night.Label })
             }),
-            note = "Prices are before taxes. Rooms are not held until the guest books on the booking page."
+            note = "Prices are before taxes. Nothing is held: rooms can be taken by others until the guest confirms a booking."
         };
     }
 }

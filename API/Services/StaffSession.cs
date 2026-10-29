@@ -14,6 +14,7 @@ namespace API.Services;
 public static class StaffSession
 {
     public const string CookieName = "druid_staff";
+    public const string EndedMessage = "Your staff session has ended. Please sign in again.";
 
     // How often a session is re-checked against the database. Deactivating an employee
     // or changing their password ends their sessions within this long, and a role change
@@ -28,6 +29,11 @@ public static class StaffSession
 
     public static Task SignOutAsync(HttpContext http) =>
         http.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+
+    // True only for a staff session. Endpoints open to guests use this, not
+    // User.Identity.IsAuthenticated, before honoring staff-only options.
+    public static bool IsStaff(ClaimsPrincipal user) =>
+        user.Identity is { IsAuthenticated: true, AuthenticationType: CookieAuthenticationDefaults.AuthenticationScheme };
 
     public static int EmployeeId(ClaimsPrincipal user) =>
         int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!, CultureInfo.InvariantCulture);
@@ -52,7 +58,7 @@ public static class StaffSession
         options.SlidingExpiration = true;
 
         options.Events.OnRedirectToLogin = context => WriteMessage(context.Response,
-            StatusCodes.Status401Unauthorized, "Your staff session has ended. Please sign in again.");
+            StatusCodes.Status401Unauthorized, EndedMessage);
         options.Events.OnRedirectToAccessDenied = context => WriteMessage(context.Response,
             StatusCodes.Status403Forbidden, "Only managers can do that.");
         options.Events.OnValidatePrincipal = ValidateAsync;

@@ -5,7 +5,7 @@
      1. Utilities (dates, money, escaping)
      2. Hotel configuration (room types, amenities)
      3. `api`: fetch() calls to the ASP.NET Core backend in /API
-     4. Router (hash-based: #/home, #/search, #/booking, #/confirmation, #/rooms, #/staff)
+     4. Router (hash-based: #/home, #/search, #/booking, #/confirmation, #/rooms, #/account, #/pay, #/staff)
      5. Views
      6. Startup
    ========================================================================== */
@@ -186,8 +186,13 @@
         if (!res.ok) {
             const err = new Error((data && (data.message || data.title)) || 'Something went wrong. Please try again.');
             err.status = res.status;
-            // 401: the staff session ended (signed out, expired, or deactivated).
-            if (res.status === 401) onStaffSignedOut();
+            err.data = data;
+            // 401: a session ended. signIn: 'guest' marks the guest account session;
+            // anything else is the staff session (signed out, expired, or deactivated).
+            if (res.status === 401) {
+                if (data && data.signIn === 'guest') onGuestSignedOut();
+                else onStaffSignedOut();
+            }
             throw err;
         }
         return data;
@@ -268,6 +273,7 @@
 
         // Card details are validated in the browser and discarded. The API only
         // ever receives whether payment was taken and the card-on-file opt-in.
+        // Guests must be signed in to their account; the server books under its email.
         createReservation(input) {
             const g = input.guest || {};
             return request('/reservations', {
@@ -400,10 +406,51 @@
             return request('/employees/' + seg(id) + '/password', { method: 'PUT', body: { password: String(password) } });
         },
 
+        // Guest accounts. The session is an HttpOnly cookie, separate from the staff one.
+        // Resolves to the signed-in guest, or null when nobody is signed in.
+        getCurrentGuest() { return request('/account/me'); },
+
+        registerGuest(input) {
+            return request('/account', {
+                method: 'POST',
+                body: {
+                    firstName: String(input.firstName || ''),
+                    lastName: String(input.lastName || ''),
+                    email: String(input.email || ''),
+                    phone: String(input.phone || ''),
+                    password: String(input.password || '')
+                }
+            });
+        },
+
+        signInGuest(email, password) {
+            return request('/account/sign-in', { method: 'POST', body: { email: String(email), password: String(password) } });
+        },
+
+        signOutGuest() { return request('/account/sign-out', { method: 'POST' }); },
+
+        // The signed-in guest's own reservations (latest arrival first), and one of them in full.
+        getMyReservations() { return request('/account/reservations'); },
+        getMyReservation(resId) { return request('/account/reservations/' + seg(resId)); },
+
+        // Pay for one of the guest's own upcoming stays. Card details are validated in the
+        // browser and discarded; the API only receives the card-on-file opt-in.
+        payReservation(resId, cardOnFile) {
+            return request('/account/reservations/' + seg(resId) + '/pay', { method: 'POST', body: { cardOnFile: !!cardOnFile } });
+        },
+
+        // The guest pressed Confirm booking on a concierge card. A room taken since the card
+        // was shown rejects with status 409 and err.data.proposal, a fresh card (or null).
+        confirmConciergeBooking(token) {
+            return request('/concierge/bookings', { method: 'POST', body: { token: String(token) } });
+        },
+
         // Druid AI Assistant (POST api/concierge). Streams the reply:
-        // onText(delta) appends text, onReset() discards text shown so far.
+        // onText(delta) appends text, onReset() discards text shown so far, and
+        // onEvent(event) receives the rest: { type: 'proposal', proposal } (a booking card)
+        // or { type: 'sign_in' } (booking needs the guest to sign in first).
         // Resolves when the reply is complete; rejects with a guest-friendly message.
-        async askConcierge(messages, page, onText, onReset) {
+        async askConcierge(messages, page, onText, onReset, onEvent) {
             let response;
             try {
                 response = await fetch(API_BASE + '/concierge', {
@@ -437,6 +484,7 @@
                 else if (event.type === 'reset') onReset();
                 else if (event.type === 'error') serverError = event.message || CONCIERGE_OFFLINE;
                 else if (event.type === 'done') done = true;
+                else if (onEvent) onEvent(event);
             };
             try {
                 for (;;) {
@@ -508,6 +556,44 @@
         return sum % 10 === 0;
     }
 
+    // Card fields shared by the booking form and the Pay now form. Card details are
+    // checked here and then discarded: they're never stored, logged, or sent.
+    function setupCardInputs(form) {
+        // Group card digits in fours as the guest types.
+        form.cardNumber.addEventListener('input', () => {
+            const digits = form.cardNumber.value.replace(/\D/g, '').slice(0, 19);
+            form.cardNumber.value = digits.replace(/(.{4})/g, '$1 ').trim();
+        });
+        form.cardExp.addEventListener('input', (e) => {
+            const digits = form.cardExp.value.replace(/\D/g, '').slice(0, 4);
+            form.cardExp.value = digits.length > 2 || (digits.length === 2 && e.inputType !== 'deleteContentBackward')
+                ? digits.slice(0, 2) + '/' + digits.slice(2) : digits;
+        });
+    }
+
+    // validate() rules for the card fields.
+    function cardRules(form) {
+        return [
+            [form.cardName, required('Enter the name on the card.')],
+            [form.cardNumber, (v) => {
+                const digits = v.replace(/\D/g, '');
+                if (digits.length < 13) return 'Enter the full card number.';
+                return luhn(digits) ? '' : 'That card number doesn’t look right.';
+            }],
+            [form.cardExp, (v) => {
+                const m = v.match(/^(\d{2})\s*\/\s*(\d{2})$/);
+                if (!m || Number(m[1]) < 1 || Number(m[1]) > 12) return 'Use MM/YY.';
+                const lastDay = new Date(2000 + Number(m[2]), Number(m[1]), 0, 23, 59, 59);
+                return lastDay < new Date() ? 'This card has expired.' : '';
+            }],
+            [form.cardCvc, (v) => (/^\d{3,4}$/.test(v) ? '' : 'Enter the 3 or 4 digit code.')],
+            [form.cardZip, (v) => (/^\d{5}$/.test(v) ? '' : 'Enter a 5 digit ZIP code.')]
+        ];
+    }
+
+    // An upcoming, unpaid stay the signed-in guest can pay for online.
+    const canPayNow = (r) => !!r && r.status === 'confirmed' && r.paymentStatus !== 'paid' && r.checkout > todayISO();
+
     function showNotice(el, message) {
         el.textContent = message || '';
         el.hidden = !message;
@@ -527,6 +613,8 @@
         booking: 'Reservation · Druid City Hotel',
         confirmation: 'Confirmed · Druid City Hotel',
         rooms: 'Rooms & Amenities · Druid City Hotel',
+        account: 'Your stays · Druid City Hotel',
+        pay: 'Payment · Druid City Hotel',
         staff: 'Staff Portal · Druid City Hotel'
     };
 
@@ -536,6 +624,8 @@
         booking: renderBooking,
         confirmation: renderConfirmation,
         rooms: renderRooms,
+        account: renderAccount,
+        pay: renderPay,
         staff: renderStaff
     };
 
@@ -691,6 +781,12 @@
                     guests: f.dataset.guests
                 });
             });
+            // Choosing a different room updates the room named above the Reserve button.
+            $('#search-results').addEventListener('change', (e) => {
+                if (e.target.name !== 'room') return;
+                const option = e.target.selectedOptions[0];
+                $('[data-room-pick]', e.target.form).textContent = option.textContent;
+            });
             form.dataset.ready = 'true';
         }
 
@@ -737,11 +833,15 @@
         }
 
         status.textContent = plural(total, 'room') + ' open · ' + stayLine(query.checkin, query.checkout);
+        // Each type offers one room, picked by the server (highest open floor); the full
+        // list sits behind "Choose a different room" for guests who care which one.
+        const roomLabel = (r) => 'Room ' + r.number + ' · ' + FLOOR_NAMES[r.floor];
         results.innerHTML = groups.map((g) => {
             const t = ROOM_TYPES[g.type];
             const floors = Array.from(new Set(g.rooms.map((r) => r.floor)));
             const options = g.rooms.map((r) =>
-                '<option value="' + r.number + '">Room ' + r.number + ' · ' + esc(FLOOR_NAMES[r.floor]) + '</option>').join('');
+                '<option value="' + r.number + '"' + (r.number === g.suggested.number ? ' selected' : '') + '>' +
+                esc(roomLabel(r)) + '</option>').join('');
             const fid = 'pick-' + g.type;
             return '<article class="result">' +
                 '<div class="result__info">' +
@@ -757,10 +857,16 @@
                     '<p class="result__meta">' + esc(nightBreakdown(g.quote.nights)) + '</p>' +
                 '</div>' +
                 '<form class="result__action" data-checkin="' + esc(query.checkin) + '" data-checkout="' + esc(query.checkout) + '" data-guests="' + query.guests + '">' +
-                    '<div class="field">' +
-                        '<label for="' + fid + '">Room</label>' +
-                        '<select id="' + fid + '" name="room">' + options + '</select>' +
-                    '</div>' +
+                    '<p class="result__pick"><span class="label-heading">Your room</span> ' +
+                        '<span data-room-pick>' + esc(roomLabel(g.suggested)) + '</span></p>' +
+                    (g.rooms.length > 1
+                        ? '<details class="result__choose"><summary>Choose a different room</summary>' +
+                            '<div class="field">' +
+                                '<label for="' + fid + '">Room</label>' +
+                                '<select id="' + fid + '" name="room">' + options + '</select>' +
+                            '</div>' +
+                          '</details>'
+                        : '<input type="hidden" name="room" value="' + g.suggested.number + '">') +
                     '<button type="submit" class="btn">Reserve</button>' +
                 '</form>' +
             '</article>';
@@ -788,16 +894,7 @@
         $$('input[name="payWhen"]', form).forEach((r) => r.addEventListener('change', syncPayment));
         syncPayment();
 
-        // Group card digits in fours as the guest types.
-        form.cardNumber.addEventListener('input', () => {
-            const digits = form.cardNumber.value.replace(/\D/g, '').slice(0, 19);
-            form.cardNumber.value = digits.replace(/(.{4})/g, '$1 ').trim();
-        });
-        form.cardExp.addEventListener('input', (e) => {
-            const digits = form.cardExp.value.replace(/\D/g, '').slice(0, 4);
-            form.cardExp.value = digits.length > 2 || (digits.length === 2 && e.inputType !== 'deleteContentBackward')
-                ? digits.slice(0, 2) + '/' + digits.slice(2) : digits;
-        });
+        setupCardInputs(form);
 
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -810,24 +907,7 @@
                 [form.email, isEmail],
                 [form.phone, isPhone]
             ];
-            if (payNow) {
-                rules.push(
-                    [form.cardName, required('Enter the name on the card.')],
-                    [form.cardNumber, (v) => {
-                        const digits = v.replace(/\D/g, '');
-                        if (digits.length < 13) return 'Enter the full card number.';
-                        return luhn(digits) ? '' : 'That card number doesn’t look right.';
-                    }],
-                    [form.cardExp, (v) => {
-                        const m = v.match(/^(\d{2})\s*\/\s*(\d{2})$/);
-                        if (!m || Number(m[1]) < 1 || Number(m[1]) > 12) return 'Use MM/YY.';
-                        const lastDay = new Date(2000 + Number(m[2]), Number(m[1]), 0, 23, 59, 59);
-                        return lastDay < new Date() ? 'This card has expired.' : '';
-                    }],
-                    [form.cardCvc, (v) => (/^\d{3,4}$/.test(v) ? '' : 'Enter the 3 or 4 digit code.')],
-                    [form.cardZip, (v) => (/^\d{5}$/.test(v) ? '' : 'Enter a 5 digit ZIP code.')]
-                );
-            }
+            if (payNow) rules.push(...cardRules(form));
             if (!validate(rules)) return;
 
             const button = $('#booking-submit');
@@ -855,6 +935,8 @@
                 lastBooking = reservation;
                 go('confirmation', { id: reservation.id }, true);
             } catch (err) {
+                // The guest session ended: show the sign-in prompt in place of the form.
+                if (err.status === 401) { router(); return; }
                 showNotice($('#booking-unavailable'), err.message + ' ');
                 $('#booking-unavailable').insertAdjacentHTML('beforeend',
                     '<a href="' + esc($('#booking-back').getAttribute('href')) + '">See what’s open</a>');
@@ -882,7 +964,7 @@
         clearErrors(form);
 
         const backParams = new URLSearchParams({ checkin: checkin || '', checkout: checkout || '', guests: p.get('guests') || '2' });
-        $('#booking-back').href = '#/search?' + backParams.toString();
+        $$('[data-booking-back]').forEach((a) => { a.href = '#/search?' + backParams.toString(); });
 
         let problem = checkStayDates(checkin, checkout);
         let info = null;
@@ -903,9 +985,24 @@
             return;
         }
 
-        bookingContext = { room: info.room.number, checkin, checkout };
         notice.hidden = true;
         layout.hidden = false;
+
+        // Booking needs a guest account. Show the stay and price either way, so the guest
+        // sees what they're signing in for, but only offer the form once they're signed in.
+        const guest = await ensureGuest();
+        $('#booking-signin').hidden = !!guest;
+        form.hidden = !guest;
+        bookingContext = guest ? { room: info.room.number, checkin, checkout } : null;
+        if (guest) {
+            // Prefill from the account without overwriting anything typed on this visit.
+            if (!form.firstName.value) form.firstName.value = guest.firstName;
+            if (!form.lastName.value) form.lastName.value = guest.lastName;
+            if (!form.phone.value) form.phone.value = guest.phone;
+            form.email.value = guest.email;
+        } else {
+            $('#booking-signin-link').href = '#/account?' + new URLSearchParams({ next: location.hash }).toString();
+        }
 
         const t = ROOM_TYPES[info.room.type];
         const guests = Math.min(Number(p.get('guests')) || 1, t.sleeps);
@@ -926,22 +1023,33 @@
 
     /* ---------- Confirmation ---------- */
 
-    function renderConfirmation(route) {
+    async function renderConfirmation(route) {
         const body = $('#confirmation-body');
         const id = route.params.get('id') || '';
-        const r = lastBooking && lastBooking.id === id ? lastBooking : null;
+        let r = lastBooking && lastBooking.id === id ? lastBooking : null;
+        // Reloaded or opened from a link: a signed-in guest can load their own reservation.
+        if (!r && id && await ensureGuest()) {
+            body.innerHTML = '<p class="status-line" role="status">Loading your reservation…</p>';
+            try {
+                r = await api.getMyReservation(id);
+            } catch (err) {
+                r = null;
+            }
+        }
         if (!r) {
-            // Reloaded or opened from a link: the details aren't kept in the browser.
             body.innerHTML = '<p class="lede">' + (id ? 'Your confirmation code is <strong>' + esc(id) + '</strong>. ' : '') +
-                'Keep it handy, and call the front desk if you need to look up or change your stay.</p>' +
-                '<div class="form-actions"><a class="btn btn--ghost" href="#/home">Back to the hotel</a></div>';
+                'Keep it handy. Sign in to see the stays booked on your account, or call the front desk if you need to change one.</p>' +
+                '<div class="form-actions"><a class="btn" href="#/account">Your stays</a>' +
+                '<a class="btn btn--ghost" href="#/home">Back to the hotel</a></div>';
             return;
         }
         const t = ROOM_TYPES[r.type];
+        const cancelled = r.status === 'cancelled';
         body.innerHTML =
             '<div class="confirmation">' +
                 '<div>' +
-                    '<p class="lede">Thank you, ' + esc(r.guest.firstName) + '. Your room is held and waiting.</p>' +
+                    '<p class="lede">' + (cancelled ? 'This reservation was cancelled.'
+                        : 'Thank you, ' + esc(r.guest.firstName) + '. Your room is held and waiting.') + '</p>' +
                     '<p class="confirmation__code"><span class="label-heading">Confirmation</span> ' + esc(r.id) + '</p>' +
                     '<dl class="summary__list">' +
                         '<div><dt>Room</dt><dd>' + esc(t.name) + ', room ' + r.room + '</dd></div>' +
@@ -951,19 +1059,112 @@
                         '<div><dt>Total</dt><dd>' + money(r.total) + '</dd></div>' +
                         '<div><dt>Payment</dt><dd>' + (r.paymentStatus === 'paid' ? 'Paid in full' : 'Due at check-in') +
                             (r.cardOnFile ? ' · Card kept on file' : '') + '</dd></div>' +
+                        (r.guest.requests ? '<div><dt>Requests</dt><dd>' + esc(r.guest.requests) + '</dd></div>' : '') +
                     '</dl>' +
                 '</div>' +
                 '<div>' +
+                    (cancelled ? '' :
                     '<h2 class="label-heading">What happens next</h2>' +
                     '<ol class="timeline">' +
                         '<li><strong>Now</strong> A confirmation is on its way to ' + esc(r.guest.email) + '.</li>' +
                         '<li><strong>Two days out</strong> We’ll send parking, directions, and a few supper suggestions.</li>' +
                         '<li><strong>Arrival</strong> Your room is ready from 3 PM. Running late? We’ll wait up.</li>' +
                     '</ol>' +
-                    '<p class="fine-print">Prototype: emails are simulated and recorded in the Staff Portal.</p>' +
-                    '<div class="form-actions"><a class="btn btn--ghost" href="#/home">Back to the hotel</a></div>' +
+                    '<p class="fine-print">Prototype: emails are simulated and recorded in the Staff Portal.</p>') +
+                    '<div class="form-actions">' +
+                        (canPayNow(r) && guestUser ? '<a class="btn" href="#/pay?id=' + encodeURIComponent(r.id) + '">Pay now</a>' : '') +
+                        '<a class="btn btn--ghost" href="#/account">Your stays</a>' +
+                        '<a class="btn btn--ghost" href="#/home">Back to the hotel</a></div>' +
                 '</div>' +
             '</div>';
+    }
+
+    /* ---------- Pay now ---------- */
+
+    // The stay being paid for on #/pay.
+    let payingFor = null;
+
+    function setupPayForm() {
+        const form = $('#pay-form');
+        setupCardInputs(form);
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!payingFor) return;
+            if (!validate(cardRules(form))) return;
+            const button = $('#pay-submit');
+            const notice = $('#pay-notice');
+            button.disabled = true;
+            try {
+                // Card fields are validated above and then discarded.
+                const reservation = await api.payReservation(payingFor.id, form.cardOnFile.checked);
+                form.reset();
+                lastBooking = reservation;
+                go('confirmation', { id: reservation.id }, true);
+            } catch (err) {
+                // The guest session ended: show the sign-in prompt instead.
+                if (err.status === 401) { router(); return; }
+                showNotice(notice, err.message);
+                notice.focus();
+            } finally {
+                button.disabled = false;
+            }
+        });
+    }
+
+    async function renderPay(route) {
+        const view = $('[data-view="pay"]');
+        if (!view.dataset.ready) {
+            setupPayForm();
+            view.dataset.ready = 'true';
+        }
+        const id = route.params.get('id') || '';
+        const notice = $('#pay-notice');
+        const layout = $('#pay-layout');
+        const form = $('#pay-form');
+        clearErrors(form);
+        showNotice(notice, '');
+        layout.hidden = true;
+        payingFor = null;
+
+        if (!(await ensureGuest())) {
+            notice.hidden = false;
+            notice.innerHTML = 'Sign in to pay for your stay. <a href="#/account?' +
+                esc(new URLSearchParams({ next: location.hash }).toString()) + '">Sign in</a>';
+            return null;
+        }
+        let r;
+        try {
+            r = await api.getMyReservation(id);
+        } catch (err) {
+            if (err.status === 401) return renderPay(route);
+            showNotice(notice, err.message);
+            return null;
+        }
+        if (!canPayNow(r)) {
+            notice.hidden = false;
+            notice.innerHTML = esc(r.paymentStatus === 'paid' ? 'This stay is already paid in full.'
+                : r.status === 'cancelled' ? 'This reservation was cancelled, so there’s nothing to pay.'
+                : 'This stay has ended. Please settle it with the front desk.') +
+                ' <a href="#/confirmation?id=' + encodeURIComponent(r.id) + '">See the reservation</a>';
+            return null;
+        }
+
+        payingFor = r;
+        layout.hidden = false;
+        const t = ROOM_TYPES[r.type];
+        $('#pay-submit').textContent = 'Pay ' + money(r.total);
+        $('#pay-back').href = '#/confirmation?id=' + encodeURIComponent(r.id);
+        $('#pay-summary').innerHTML =
+            '<p class="summary__room">' + esc(t ? t.name : r.type) + '</p>' +
+            '<p class="result__meta">Room ' + r.room + ' · Confirmation ' + esc(r.id) + '</p>' +
+            '<dl class="summary__list">' +
+                '<div><dt>Arrive</dt><dd>' + esc(fmtDate(r.checkin)) + ', from 3 PM</dd></div>' +
+                '<div><dt>Depart</dt><dd>' + esc(fmtDate(r.checkout)) + ', by 11 AM</dd></div>' +
+                '<div><dt>Nights</dt><dd>' + esc(nightBreakdown(r.nights)) + '</dd></div>' +
+            '</dl>' +
+            '<p class="summary__total"><span>Total</span> <strong>' + money(r.total) + '</strong></p>' +
+            '<p class="fine-print">Before applicable taxes.</p>';
+        return null;
     }
 
     /* ---------- Property and room information ---------- */
@@ -989,7 +1190,193 @@
                 '<p class="fine-print">' + plural(counts[key], 'room') + ' of this kind</p>' +
             '</article>';
         }).join('') + '<p><a class="btn" href="#/search">Check availability</a></p>';
-        $('[data-rate-fact]').textContent = money(rates.weekday) + ' weeknights, ' + money(rates.weekend) + ' Friday and Saturday nights';
+        $('[data-rate-fact]').textContent = money(rates.weekday) + ' weeknights, ' + money(rates.weekend) + ' Friday and Saturday nights; ' +
+            'master suites ' + money(rates.suiteWeekday) + ' and ' + money(rates.suiteWeekend);
+    }
+
+    /* ---------- Guest account ---------- */
+
+    // The signed-in guest: undefined until checked with the server, null when signed out.
+    let guestUser;
+    // The concierge asked the guest to sign in to book, so it picks the booking back up after.
+    let conciergeAwaitingSignIn = false;
+
+    let guestCheck = null;  // the check in flight, shared by everyone waiting on it
+
+    async function ensureGuest() {
+        if (guestUser !== undefined) return guestUser;
+        if (!guestCheck) {
+            guestCheck = api.getCurrentGuest().then((guest) => {
+                guestUser = guest;
+                updateAccountNav();
+            }, () => {
+                // Offline: treat as signed out for now, and check again next time.
+            }).finally(() => { guestCheck = null; });
+        }
+        await guestCheck;
+        return guestUser === undefined ? null : guestUser;
+    }
+
+    function updateAccountNav() {
+        $$('[data-account-link]').forEach((a) => { a.textContent = guestUser ? 'Your stays' : 'Sign in'; });
+    }
+
+    // Called by request() on a guest 401 (the guest session ended), and on sign-out.
+    function onGuestSignedOut() {
+        if (guestUser === null) return;
+        guestUser = null;
+        updateAccountNav();
+        ['#account-upcoming', '#account-past', '#account-who', '#account-status'].forEach((sel) => { $(sel).innerHTML = ''; });
+    }
+
+    async function renderAccount(route) {
+        const view = $('[data-view="account"]');
+        if (!view.dataset.ready) {
+            setupAccount();
+            view.dataset.ready = 'true';
+        }
+        const guest = await ensureGuest();
+        $('#account-signed-out').hidden = !!guest;
+        $('#account-signed-in').hidden = !guest;
+
+        if (!guest) {
+            $('#account-title').textContent = 'Sign in to book.';
+            $('#account-lede').textContent = route.params.get('next')
+                ? 'Sign in, or create an account, and we’ll take you right back to your booking.'
+                : 'A hotel account keeps your reservations together, and lets our concierge book a room for you in the chat.';
+            return null;
+        }
+
+        $('#account-title').textContent = 'Your stays.';
+        $('#account-lede').textContent = 'Every reservation made from your account, on the site or with our concierge.';
+        $('#account-who').textContent = guest.firstName + ' ' + guest.lastName + ' (' + guest.email + ')';
+        const status = $('#account-status');
+        status.textContent = 'Loading your stays…';
+        let stays;
+        try {
+            stays = await api.getMyReservations();
+        } catch (err) {
+            // A 401 has already signed the page out; show the sign-in forms instead.
+            if (err.status === 401) return renderAccount(route);
+            status.textContent = err.message;
+            return null;
+        }
+        const today = todayISO();
+        const isUpcoming = (r) => r.status === 'confirmed' && r.checkout > today;
+        const upcoming = stays.filter(isUpcoming).reverse();  // soonest first
+        const past = stays.filter((r) => !isUpcoming(r));
+        status.textContent = stays.length ? plural(upcoming.length, 'upcoming stay') : 'No stays yet.';
+        $('#account-upcoming').innerHTML = upcoming.length
+            ? stayList(upcoming)
+            : '<p class="hint">Nothing booked yet. <a href="#/search">Find a room</a>, or ask our concierge to book one for you.</p>';
+        $('#account-past').innerHTML = past.length ? stayList(past) : '<p class="hint">None yet.</p>';
+        return null;
+    }
+
+    function stayList(stays) {
+        return '<ul class="stays">' + stays.map((r) => {
+            const t = ROOM_TYPES[r.type];
+            const cancelled = r.status === 'cancelled';
+            return '<li class="stay">' +
+                '<div>' +
+                    '<p class="stay__name">' + esc(t ? t.name : r.type) + ', room ' + r.room + '</p>' +
+                    '<p class="result__meta">' + esc(stayLine(r.checkin, r.checkout)) + ' · ' + plural(r.guests, 'guest') + '</p>' +
+                '</div>' +
+                '<div class="stay__side">' +
+                    '<p class="stay__total">' + money(r.total) + '</p>' +
+                    '<p class="result__meta">' + esc(r.id) + ' · ' +
+                        (cancelled ? 'Cancelled' : r.paymentStatus === 'paid' ? 'Paid' : 'Due at check-in') + '</p>' +
+                    (cancelled ? '' : '<p class="stay__links">' +
+                        '<a href="#/confirmation?id=' + encodeURIComponent(r.id) + '">Details' +
+                            '<span class="visually-hidden"> for ' + esc(r.id) + '</span></a>' +
+                        (canPayNow(r) ? ' · <a href="#/pay?id=' + encodeURIComponent(r.id) + '">Pay now' +
+                            '<span class="visually-hidden"> for ' + esc(r.id) + '</span></a>' : '') +
+                    '</p>') +
+                '</div>' +
+            '</li>';
+        }).join('') + '</ul>';
+    }
+
+    function setupAccount() {
+        const sf = $('#guest-signin-form');
+        sf.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = $('#gs-message');
+            showNotice(message, '');
+            if (!validate([[sf.email, isEmail], [sf.password, required('Enter your password.')]])) return;
+            const button = $('button[type="submit"]', sf);
+            button.disabled = true;
+            try {
+                guestUser = await api.signInGuest(sf.email.value.trim(), sf.password.value);
+            } catch (err) {
+                showNotice(message, err.message);
+                sf.password.value = '';
+                sf.password.focus();
+                return;
+            } finally {
+                button.disabled = false;
+            }
+            sf.reset();
+            guestSignedIn();
+        });
+
+        const rf = $('#guest-register-form');
+        rf.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = $('#gr-message');
+            showNotice(message, '');
+            const ok = validate([
+                [rf.firstName, required('Enter a first name.')],
+                [rf.lastName, required('Enter a last name.')],
+                [rf.email, isEmail],
+                [rf.phone, isPhone],
+                [rf.password, (v) => (v.length >= 8 ? '' : 'Use a password of at least 8 characters.')]
+            ]);
+            if (!ok) return;
+            const button = $('button[type="submit"]', rf);
+            button.disabled = true;
+            try {
+                guestUser = await api.registerGuest({
+                    firstName: rf.firstName.value.trim(),
+                    lastName: rf.lastName.value.trim(),
+                    email: rf.email.value.trim(),
+                    phone: rf.phone.value.trim(),
+                    password: rf.password.value
+                });
+            } catch (err) {
+                showNotice(message, err.message);
+                return;
+            } finally {
+                button.disabled = false;
+            }
+            rf.reset();
+            guestSignedIn();
+        });
+
+        $('[data-action="guest-sign-out"]').addEventListener('click', async () => {
+            try {
+                await api.signOutGuest();
+            } catch (err) {
+                $('#account-status').textContent = err.message;
+                return;
+            }
+            onGuestSignedOut();
+            router();
+        });
+    }
+
+    // After signing in or creating an account: back to the page that sent the guest here
+    // (only a route on this site), or their stays.
+    function guestSignedIn() {
+        updateAccountNav();
+        if (conciergeAwaitingSignIn) {
+            conciergeAwaitingSignIn = false;
+            addConciergeNote('You’re signed in, ' + guestUser.firstName + '. Shall I go ahead and set up that booking?');
+            setConciergeState('open', false);
+        }
+        const next = parseHash().params.get('next') || '';
+        if (/^#\/(?!account\b)[a-z]+/.test(next)) location.replace(next);
+        else router();
     }
 
     /* ---------- Staff portal ---------- */
@@ -1547,7 +1934,7 @@
         const guestOptions = Array.from({ length: Math.max(t.sleeps, r.guests) }, (_, i) => i + 1).map((n) =>
             '<option value="' + n + '"' + (n === r.guests ? ' selected' : '') + '>' + n + '</option>').join('');
         const messages = r.messages.slice().reverse().map((m) =>
-            '<li><p class="message__meta">' + esc(fmtTimestamp(m.at)) + ' · ' + (m.from === 'staff' ? 'Front desk' : 'Automatic') + '</p>' +
+            '<li><p class="message__meta">' + esc(fmtTimestamp(m.at)) + ' · ' + (m.from === 'staff' ? 'Front desk' : m.from === 'concierge' ? 'Concierge' : 'Automatic') + '</p>' +
             '<p>' + esc(m.text) + '</p></li>').join('');
 
         host.innerHTML =
@@ -1563,7 +1950,7 @@
                         '<div><dt>Phone</dt><dd><a href="tel:' + esc(g.phone.replace(/[^\d+]/g, '')) + '">' + esc(g.phone) + '</a></dd></div>' +
                         '<div><dt>Guests</dt><dd>' + r.guests + '</dd></div>' +
                         '<div><dt>Requests</dt><dd>' + (g.requests ? esc(g.requests) : '—') + '</dd></div>' +
-                        '<div><dt>Booked</dt><dd>' + esc(fmtTimestamp(r.createdAt)) + (r.source === 'staff' ? ' by front desk' : ' online') + '</dd></div>' +
+                        '<div><dt>Booked</dt><dd>' + esc(fmtTimestamp(r.createdAt)) + ({ staff: ' by front desk', concierge: ' with the concierge' }[r.source] || ' online') + '</dd></div>' +
                     '</dl>' +
                     '<dl class="summary__list">' +
                         '<div><dt>Room</dt><dd>' + r.room + ' · ' + esc(t.name) + '</dd></div>' +
@@ -1963,7 +2350,7 @@
     function conciergePage() {
         const name = parseHash().name;
         if (name === 'staff') return 'staff';
-        if (name === 'search' || name === 'booking' || name === 'confirmation') return 'booking';
+        if (name === 'search' || name === 'booking' || name === 'confirmation' || name === 'pay') return 'booking';
         return 'main';
     }
 
@@ -2013,6 +2400,19 @@
         return body;
     }
 
+    // Adds an assistant line that wasn't streamed from the server (for example after the
+    // guest signs in), and keeps it in the history so the assistant knows it was said.
+    function addConciergeNote(text) {
+        conciergeChat.push({ role: 'assistant', content: text });
+        addConciergeBubble('assistant', text);
+    }
+
+    // A card number (13 to 19 digits, spaces or dashes allowed) that passes the Luhn check.
+    // The chat goes to an AI service, so card numbers are stopped before they're sent.
+    function hasCardNumber(text) {
+        return (String(text).match(/\d(?:[ -]?\d){12,18}/g) || []).some((m) => luhn(m.replace(/\D/g, '')));
+    }
+
     async function sendConciergeMessage(text) {
         conciergeBusy = true;
         const form = $('[data-concierge-form]');
@@ -2027,6 +2427,10 @@
 
         let bubble = null;
         let reply = '';
+        // Cards from this reply, shown after its text: the latest booking offer, and
+        // whether booking needs the guest to sign in first.
+        let proposal = null;
+        let signIn = false;
         try {
             await api.askConcierge(
                 conciergeChat.slice(-CONCIERGE_WINDOW),
@@ -2044,6 +2448,10 @@
                 () => {
                     reply = '';
                     if (bubble) bubble.textContent = '';
+                },
+                (event) => {
+                    if (event.type === 'proposal' && event.proposal) proposal = event.proposal;
+                    else if (event.type === 'sign_in') signIn = true;
                 }
             );
             if (!reply.trim()) throw new Error(CONCIERGE_OFFLINE);
@@ -2056,10 +2464,120 @@
         } finally {
             typing.hidden = true;
             if (bubble) bubble.parentNode.removeAttribute('aria-busy');
+            if (proposal) addProposalCard(proposal);
+            if (signIn) addSignInCard();
             sendButton.disabled = false;
             conciergeBusy = false;
             scrollConciergeLog();
         }
+    }
+
+    /* Booking cards. The assistant only proposes; the guest's own press of Confirm
+       booking books the room (POST api/concierge/bookings with the card's token). */
+
+    // Open offers: card element -> { proposal, timer }.
+    const conciergeOffers = new Map();
+
+    function addConciergeCard(html) {
+        const li = document.createElement('li');
+        li.className = 'concierge__msg concierge__msg--card';
+        li.innerHTML = '<span class="visually-hidden">Druid AI Assistant: </span><div class="concierge-card">' + html + '</div>';
+        $('[data-concierge-log]').append(li);
+        scrollConciergeLog();
+        return $('.concierge-card', li);
+    }
+
+    function addProposalCard(p) {
+        // One open offer at a time, so one press books one room.
+        Array.from(conciergeOffers.keys()).forEach((card) => closeOffer(card, 'Replaced by the newer offer below.'));
+        const card = addConciergeCard(
+            '<p class="concierge-card__title">Ready to book</p>' +
+            '<dl class="concierge-card__list">' +
+                '<div><dt>Room</dt><dd>' + esc(p.typeName) + ', room ' + p.room + ' · ' + esc(FLOOR_NAMES[p.floor] || '') + '</dd></div>' +
+                '<div><dt>Arrive</dt><dd>' + esc(fmtDate(p.checkin)) + ', from 3 PM</dd></div>' +
+                '<div><dt>Depart</dt><dd>' + esc(fmtDate(p.checkout)) + ', by 11 AM</dd></div>' +
+                '<div><dt>Guests</dt><dd>' + esc(plural(p.guests, 'guest')) + ' · ' + esc(p.guestName) + '</dd></div>' +
+                (p.requests ? '<div><dt>Requests</dt><dd>' + esc(p.requests) + '</dd></div>' : '') +
+                '<div><dt>Total</dt><dd><strong>' + money(p.total) + '</strong> · ' + esc(nightBreakdown(p.nights)) + '</dd></div>' +
+            '</dl>' +
+            '<p class="concierge-card__fine">Before taxes. Pay at check-in, or pay by card once it’s booked. This offer is good for 10 minutes.</p>' +
+            '<div class="concierge-card__actions"><button type="button" class="btn" data-confirm-booking>Confirm booking</button></div>' +
+            '<p class="concierge-card__status" data-card-status tabindex="-1"></p>');
+        const timer = setTimeout(() => closeOffer(card, 'This offer has expired. Ask me again and I’ll recheck the room and price.'),
+            (Number(p.expiresInSeconds) || 600) * 1000);
+        conciergeOffers.set(card, { proposal: p, timer });
+    }
+
+    // Ends an offer: no more Confirm button, and a note saying why.
+    function closeOffer(card, message) {
+        const offer = conciergeOffers.get(card);
+        if (offer) clearTimeout(offer.timer);
+        conciergeOffers.delete(card);
+        const button = $('[data-confirm-booking]', card);
+        const hadFocus = button && document.activeElement === button;
+        if (button) button.closest('.concierge-card__actions').remove();
+        card.classList.add('concierge-card--closed');
+        const status = $('[data-card-status]', card);
+        status.textContent = message;
+        if (hadFocus) status.focus();
+    }
+
+    async function confirmOffer(card) {
+        const offer = conciergeOffers.get(card);
+        if (!offer) return;
+        const button = $('[data-confirm-booking]', card);
+        const status = $('[data-card-status]', card);
+        button.disabled = true;
+        status.textContent = 'Booking…';
+        let r;
+        try {
+            r = await api.confirmConciergeBooking(offer.proposal.token);
+        } catch (err) {
+            if (err.status === 401) {
+                closeOffer(card, 'Your sign-in has ended. Sign in again, then ask me to set it up again.');
+                addSignInCard();
+            } else if (!err.status || err.status === 429 || err.status >= 500) {
+                // Offline or busy: the offer still stands, so let them try again.
+                status.textContent = err.message;
+                button.disabled = false;
+            } else {
+                // Taken, repriced, or expired. A fresh card follows when one is available.
+                closeOffer(card, err.message);
+                if (err.data && err.data.proposal) addProposalCard(err.data.proposal);
+            }
+            return;
+        }
+
+        clearTimeout(offer.timer);
+        conciergeOffers.delete(card);
+        lastBooking = r;
+        const t = ROOM_TYPES[r.type];
+        card.classList.add('concierge-card--booked');
+        $('.concierge-card__title', card).textContent = 'Booked';
+        $('.concierge-card__fine', card).textContent = 'Before taxes. Due at check-in, or pay by card now.';
+        // Pay now replaces Confirm booking; it opens the payment page for this stay.
+        button.closest('.concierge-card__actions').innerHTML =
+            '<a class="btn" href="#/pay?id=' + encodeURIComponent(r.id) + '">Pay now</a>';
+        status.innerHTML = 'You’re booked. Confirmation <strong>' + esc(r.id) + '</strong>. ' +
+            '<a href="#/confirmation?id=' + encodeURIComponent(r.id) + '">See your confirmation</a> · <a href="#/account">Your stays</a>';
+        status.focus();
+        // Part of the history the assistant sees, so later replies know the booking is made.
+        conciergeChat.push({
+            role: 'assistant',
+            content: 'You’re booked: confirmation ' + r.id + ', ' + (t ? t.name : r.type) + ' room ' + r.room + ', ' +
+                stayLine(r.checkin, r.checkout) + ', ' + money(r.total) + ' before taxes, due at check-in unless you pay now with the Pay now button.'
+        });
+    }
+
+    // Booking needs a guest account: a button to sign in, which brings the guest back here.
+    function addSignInCard() {
+        conciergeAwaitingSignIn = true;
+        const next = /^#\/(?!account\b)[a-z]+/.test(location.hash) ? location.hash : '';
+        addConciergeCard(
+            '<p>Booking needs a hotel account, so only you can see your stays.</p>' +
+            '<div class="concierge-card__actions"><a class="btn" data-concierge-sign-in href="#/account' +
+                (next ? '?' + esc(new URLSearchParams({ next }).toString()) : '') + '">Sign in or create an account</a></div>' +
+            '<p class="concierge-card__fine">This chat stays right here while you do.</p>');
     }
 
     function initConcierge() {
@@ -2079,6 +2597,17 @@
             }
         });
 
+        const log = $('[data-concierge-log]', root);
+        log.addEventListener('click', (e) => {
+            const confirm = e.target.closest('[data-confirm-booking]');
+            if (confirm) confirmOffer(confirm.closest('.concierge-card'));
+            // On a phone the chat covers the page, so tuck it away when a card link opens one
+            // (sign in, see your confirmation, your stays). The conversation is kept.
+            if (e.target.closest('.concierge-card a') && !window.matchMedia('(min-width: 36rem)').matches) {
+                setConciergeState('min', false);
+            }
+        });
+
         const form = $('[data-concierge-form]', root);
         const input = $('#concierge-input');
         form.addEventListener('submit', (e) => {
@@ -2086,6 +2615,11 @@
             const text = input.value.trim();
             if (!text) {
                 setFieldError(input, 'Type a question for the assistant.');
+                input.focus();
+                return;
+            }
+            if (hasCardNumber(text)) {
+                setFieldError(input, 'For your security, please don’t type card numbers in the chat. To pay by card, use Pay now once your room is booked.');
                 input.focus();
                 return;
             }
@@ -2146,6 +2680,9 @@
 
         // Set up the concierge before room types load, so it still appears if that call fails.
         initConcierge();
+
+        // Whether a guest is signed in, for the menu's "Sign in" / "Your stays" link.
+        ensureGuest();
 
         // Room types live on the server; every view needs them, so load them before routing.
         api.getRoomTypes().then((types) => {

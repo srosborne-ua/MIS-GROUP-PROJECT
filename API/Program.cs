@@ -41,11 +41,15 @@ builder.Services.AddSingleton<Db>();
 builder.Services.AddSingleton<HotelStore>();
 builder.Services.AddSingleton<EmployeeStore>();
 builder.Services.AddSingleton<ShiftStore>();
+builder.Services.AddSingleton<GuestAccountStore>();
 
 // Staff sign-in: an HttpOnly cookie (StaffSession). Every endpoint requires a signed-in
 // employee unless it's marked [AllowAnonymous], so a new endpoint is staff only by default.
+// Guest sign-in is a second cookie under its own scheme (GuestSession). It is never the
+// default, so it only counts on endpoints that ask for it by name.
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
-    .AddCookie(options => StaffSession.Configure(options, builder.Environment.IsDevelopment()));
+    .AddCookie(options => StaffSession.Configure(options, builder.Environment.IsDevelopment()))
+    .AddCookie(GuestSession.Scheme, options => GuestSession.Configure(options, builder.Environment.IsDevelopment()));
 builder.Services.AddAuthorization(options =>
     options.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
 
@@ -53,6 +57,9 @@ builder.Services.AddAuthorization(options =>
 // IConciergeTool singletons once they are approved.
 // Availability and prices through HotelStore, the same search the booking page uses.
 builder.Services.AddSingleton<IConciergeTool, CheckAvailabilityTool>();
+// Booking: the model proposes, and the guest's Confirm booking button books (POST api/concierge/bookings).
+builder.Services.AddSingleton<BookingProposals>();
+builder.Services.AddSingleton<IConciergeTool, ProposeBookingTool>();
 // Database lookups (RAG): read-only SELECTs as druid_llm_ro, only when DB_LLM_RO_CONNECTION is set.
 builder.Services.AddSingleton<ReadOnlyDb>();
 if (ReadOnlyDb.IsConfigured)
@@ -76,14 +83,25 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy("sign-in", context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(15) }));
+    // The same for guest sign-in and new guest accounts, counted separately so guests
+    // can't lock the front desk out (they may share the hotel's network).
+    options.AddPolicy("guest-sign-in", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(15) }));
+    // Confirm booking presses in the concierge chat, and online payments: 10 per 10 minutes per IP.
+    options.AddPolicy("booking", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(10) }));
     options.OnRejected = async (context, cancellationToken) =>
     {
-        var signIn = context.HttpContext.Request.Path.StartsWithSegments("/api/auth");
-        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-        await context.HttpContext.Response.WriteAsJsonAsync(
-            new { message = signIn
+        var path = context.HttpContext.Request.Path;
+        var message = path.StartsWithSegments("/api/concierge/bookings") || path.Value?.EndsWith("/pay") == true
+            ? "Too many attempts. Please wait a few minutes and try again."
+            : path.StartsWithSegments("/api/auth") || path.StartsWithSegments("/api/account")
                 ? "Too many sign-in attempts. Please wait a few minutes and try again."
-                : "Too many messages. Please wait a minute and try again." }, cancellationToken);
+                : "Too many messages. Please wait a minute and try again.";
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        await context.HttpContext.Response.WriteAsJsonAsync(new { message }, cancellationToken);
     };
 });
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi

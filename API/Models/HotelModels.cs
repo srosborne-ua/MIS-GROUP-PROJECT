@@ -26,7 +26,8 @@ public record NightRate(DateOnly Date, decimal Amount, string Kind, string? Labe
 
 public record Quote(List<NightRate> Nights, decimal Total);
 
-public record AvailabilityGroup(string Type, List<RoomSummary> Rooms, Quote Quote);
+// Suggested: the room offered first (see HotelStore.SuggestRoom); always one of Rooms.
+public record AvailabilityGroup(string Type, List<RoomSummary> Rooms, Quote Quote, RoomSummary Suggested);
 
 public record RoomCheck(Room Room, bool Available, Quote Quote);
 

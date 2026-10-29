@@ -347,6 +347,7 @@ p + p { margin-top: 1rem; }
 
 input[type="text"],
 input[type="email"],
+input[type="password"],
 input[type="tel"],
 input[type="date"],
 input[type="number"],
@@ -390,6 +391,11 @@ input::placeholder,
 textarea::placeholder { color: #7a746a; }
 
 [aria-invalid="true"] { border-color: var(--accent); }
+
+/* Shown but not editable, e.g. the account email on the booking form. */
+input[readonly] { background: var(--paper-deep); border-color: var(--line); }
+
+input[readonly]:hover { border-color: var(--line); }
 
 .field-error {
     margin-top: 0.4rem;
@@ -699,8 +705,63 @@ input[type="checkbox"] {
 
 .result__action .btn { width: 100%; }
 
+.result__pick { margin-bottom: 0.75rem; }
+
+.result__pick .label-heading { display: block; margin-bottom: 0.25rem; }
+
+.result__choose { margin-bottom: 1rem; font-size: 0.875rem; }
+
+.result__choose summary {
+    cursor: pointer;
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-color: var(--line-strong);
+    text-underline-offset: 0.2em;
+}
+
+.result__choose summary:hover { color: var(--accent); }
+
+.result__choose[open] summary { margin-bottom: 0.75rem; }
+
 @media (min-width: 56rem) {
     .result { grid-template-columns: 1.6fr 1fr 14rem; gap: 3rem; align-items: start; }
+}
+
+/* Guest account ----------------------------------------------------------- */
+.account-forms {
+    display: grid;
+    gap: 3rem;
+    padding-bottom: var(--section);
+}
+
+@media (min-width: 56rem) {
+    .account-forms { grid-template-columns: 1fr 1fr; gap: 4rem; align-items: start; }
+}
+
+#account-signed-in { padding-bottom: var(--section); }
+
+.stays { list-style: none; padding: 0; }
+
+.stay {
+    display: grid;
+    gap: 0.5rem;
+    padding: 1.25rem 0;
+    border-top: 1px solid var(--line);
+}
+
+.stay:last-child { border-bottom: 1px solid var(--line); }
+
+.stay__name { font-family: var(--serif); font-size: 1.5rem; line-height: 1.2; }
+
+.stay__total { font-family: var(--serif); font-size: 1.5rem; line-height: 1.2; }
+
+.stay__side p + p { margin-top: 0.25rem; }
+
+.stay__links { font-size: 0.875rem; }
+
+@media (min-width: 40rem) {
+    .stay { grid-template-columns: 1fr auto; gap: 2rem; align-items: start; }
+    .stay__side { text-align: right; }
 }
 
 /* Checkout ---------------------------------------------------------------- */
@@ -1341,6 +1402,50 @@ input[type="checkbox"] {
 .concierge__msg--error { border-left-color: var(--accent); }
 
 .concierge__msg--error .concierge__text { color: var(--accent-deep); }
+
+/* Booking and sign-in cards in the chat */
+.concierge__msg--card { align-self: stretch; max-width: none; }
+
+.concierge-card {
+    padding: 0.875rem 1rem;
+    border: 1px solid var(--ink);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+
+.concierge-card--closed { border-color: var(--line); }
+
+.concierge-card__title {
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin-bottom: 0.5rem;
+}
+
+.concierge-card__list > div {
+    display: grid;
+    grid-template-columns: 5rem 1fr;
+    gap: 0.5rem;
+    padding: 0.3rem 0;
+    border-top: 1px solid var(--line);
+}
+
+.concierge-card__list dt { color: var(--ink-soft); }
+
+.concierge-card__list dd { overflow-wrap: anywhere; }
+
+.concierge-card__fine { margin-top: 0.625rem; font-size: 0.8125rem; color: var(--ink-soft); }
+
+.concierge-card__actions { margin-top: 0.75rem; }
+
+.concierge-card__actions .btn { width: 100%; }
+
+.concierge-card__status:not(:empty) { margin-top: 0.625rem; }
+
+.concierge-card--booked .concierge-card__title { color: var(--ink); }
 
 .concierge__typing { padding: 0 1.25rem 0.75rem; }
 

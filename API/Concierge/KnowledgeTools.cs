@@ -50,7 +50,7 @@ public class GetKnowledgeSchemaTool(ReadOnlyDb db) : IConciergeTool
         Strict = true
     };
 
-    public async Task<object> Run(IReadOnlyDictionary<string, JsonElement> input, string page)
+    public async Task<object> Run(IReadOnlyDictionary<string, JsonElement> input, ConciergeContext context)
     {
         await using var conn = await db.OpenAsync(CancellationToken.None);
         var columns = await conn.QueryAsync<ColumnRow>(
@@ -117,7 +117,7 @@ public class SearchKnowledgeTool(ReadOnlyDb db, ILogger<SearchKnowledgeTool> log
         Strict = true
     };
 
-    public async Task<object> Run(IReadOnlyDictionary<string, JsonElement> input, string page)
+    public async Task<object> Run(IReadOnlyDictionary<string, JsonElement> input, ConciergeContext context)
     {
         var sql = input.TryGetValue("sql", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
         if (KnowledgeQueryValidator.Check(sql) is { } reason)

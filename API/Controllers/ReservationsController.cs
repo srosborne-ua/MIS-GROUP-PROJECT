@@ -5,7 +5,8 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace API.Controllers;
 
-// Staff only, except creating a reservation, which guests do from the booking page.
+// Staff only, except creating a reservation, which signed-in guests do from the booking page.
+// A guest's own reservations are in AccountController.
 [ApiController]
 [Route("api/reservations")]
 public class ReservationsController(HotelStore store) : ControllerBase
@@ -24,11 +25,21 @@ public class ReservationsController(HotelStore store) : ControllerBase
 
     // POST api/reservations
     // The body never contains card details: only paid/unpaid and the card-on-file opt-in.
-    // source "staff" (past arrivals allowed, no payment method) only counts for signed-in staff.
+    // Staff (source "staff": past arrivals allowed, no payment method) need a staff session;
+    // guests need a guest account session and book under their account's email.
     [HttpPost]
     [AllowAnonymous]
-    public Task<Reservation> CreateReservation(CreateReservationRequest input) =>
-        store.CreateReservationAsync(input, isStaff: input.Source == "staff" && User.Identity?.IsAuthenticated == true);
+    public async Task<ActionResult<Reservation>> CreateReservation(CreateReservationRequest input)
+    {
+        if (input.Source == "staff")
+        {
+            if (!StaffSession.IsStaff(User)) return Unauthorized(new { message = StaffSession.EndedMessage });
+            return await store.CreateReservationAsync(input, Booker.Staff);
+        }
+        var guest = await GuestSession.CurrentAsync(HttpContext);
+        if (guest == null) return GuestSession.SignInRequired();
+        return await store.CreateReservationAsync(input, Booker.Guest(guest.Id));
+    }
 
     // POST api/reservations/DC-1042/cancel
     [HttpPost("{id}/cancel")]

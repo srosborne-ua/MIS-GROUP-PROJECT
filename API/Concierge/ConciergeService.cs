@@ -20,7 +20,7 @@ public class ConciergeService(ConciergePrompt prompt, ConciergeTools tools)
     public const int MaxHistory = 6;           // rolling window of messages sent to the model
     private const int MaxMessageChars = 2000;  // per message
     private const int MaxTokens = 2048;        // short chat replies; includes thinking
-    private const int MaxToolTurns = 6;        // schema, a couple of queries, availability, then the answer
+    private const int MaxToolTurns = 6;        // e.g. availability, propose_booking, then the answer
     private const int HoldBackChars = 200;     // see Run(): longer than a pre-tool note, short enough to feel instant
 
     public static readonly string Model = Environment.GetEnvironmentVariable("CONCIERGE_MODEL") is { Length: > 0 } m
@@ -68,13 +68,16 @@ public class ConciergeService(ConciergePrompt prompt, ConciergeTools tools)
     }
 
     // Runs one concierge reply.
+    //   context       - the site section, the signed-in guest, and Emit() for events
+    //                   such as the booking card (see ConciergeContext)
     //   onText(delta) - a chunk of reply text to show
     //   onReset()     - discard text shown so far (the model declined mid-reply and a
     //                   fallback model is starting over)
-    public async Task<ConciergeStatus> Run(List<BetaMessageParam> messages, string page,
+    public async Task<ConciergeStatus> Run(List<BetaMessageParam> messages, ConciergeContext context,
         Func<string, Task> onText, Func<Task> onReset, CancellationToken cancellationToken)
     {
-        var system = prompt.Build(page).Select(text => new BetaTextBlockParam { Text = text }).ToList();
+        var system = prompt.Build(context.Page, signedIn: context.Guest != null)
+            .Select(text => new BetaTextBlockParam { Text = text }).ToList();
         var toolDefinitions = tools.Definitions();
         var conversation = new List<BetaMessageParam>(messages);
         var shownText = false;  // text already sent in an earlier turn of this reply
@@ -154,7 +157,7 @@ public class ConciergeService(ConciergePrompt prompt, ConciergeTools tools)
             var results = new List<BetaContentBlockParam>();
             foreach (var use in toolUses)
             {
-                var (content, isError) = await tools.Run(use.Name, use.Input, page);
+                var (content, isError) = await tools.Run(use.Name, use.Input, context);
                 results.Add(new BetaToolResultBlockParam { ToolUseID = use.ID, Content = content, IsError = isError });
             }
             conversation.Add(new BetaMessageParam { Role = Role.Assistant, Content = ToParams(message.Content) });

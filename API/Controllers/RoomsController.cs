@@ -27,7 +27,7 @@ public class RoomsController(HotelStore store) : ControllerBase
     [AllowAnonymous]
     public Task<List<AvailabilityGroup>> SearchAvailability([FromQuery] AvailabilityQuery query)
     {
-        query.AllowPast = query.AllowPast && User.Identity?.IsAuthenticated == true;
+        query.AllowPast = query.AllowPast && StaffSession.IsStaff(User);
         return store.SearchAvailabilityAsync(query);
     }
 

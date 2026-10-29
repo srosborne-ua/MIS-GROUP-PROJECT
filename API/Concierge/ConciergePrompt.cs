@@ -32,8 +32,8 @@ public class ConciergePrompt
     public static string NormalizePage(string? page) =>
         page is not null && Pages.ContainsKey(page) ? page : "main";
 
-    // The stable hotel prompt first, then the per-request page context.
-    public IReadOnlyList<string> Build(string page) => [_basePrompt, BuildPagePrompt(NormalizePage(page))];
+    // The stable hotel prompt first, then the per-request context (date, page, sign-in).
+    public IReadOnlyList<string> Build(string page, bool signedIn) => [_basePrompt, BuildPagePrompt(NormalizePage(page), signedIn)];
 
     private static string BuildBasePrompt(JsonElement info, bool knowledgeBase)
     {
@@ -64,15 +64,26 @@ public class ConciergePrompt
             "",
             "## Payment",
             onlinePayment
-                ? "Online payment is available: guests can pay by card on the site while completing a reservation on the booking page."
+                ? "Online payment is available: guests can pay by card on the site, while completing a reservation on the booking page, or afterwards with Pay now (on the booked card in this chat, the confirmation page, or Your stays). Otherwise they pay at the hotel at check-in. Card details are only ever entered on the site's payment page, never in this chat."
                 : "Online payment is NOT available yet. Do not tell guests they can pay on the site. If asked, say online payment is coming soon and the front desk can help with payment in the meantime.",
             "",
             "## Availability and prices",
-            "Use check_availability for any question about open rooms or the cost of a stay on particular dates. It uses the same live rules as the booking page, so its room numbers and totals are exact. Work out dates from today's date (given below) when the guest says things like \"this weekend\" or \"next Friday\"; if they haven't given dates, ask for them. Mention the total for the whole stay, and the nightly breakdown when it helps (for example weekend or special nights).",
+            "Use check_availability for any question about open rooms or the cost of a stay on particular dates. It uses the same live rules as the booking page, so its room numbers and totals are exact. Work out dates from today's date (given below) when the guest says things like \"this weekend\" or \"next Friday\". Mention the total for the whole stay, and the nightly breakdown when it helps (for example weekend or special nights).",
+            "Dates: when a guest asks what's open or what a stay costs without giving dates, don't stall. Check a likely stay within the next week (tonight for one night, or the coming Friday and Saturday nights if they mention a weekend) and say plainly which dates you checked, so they can change them. Before booking, the dates must be ones the guest gave or agreed to: if they haven't, ask for their dates in one short question, or offer the dates you checked.",
+            "",
+            "## Choosing a room",
+            "Offer one room, not a list. Pick the room type that fits (bed type, number of guests, and any floor preference), and offer its suggested_room from check_availability, naming the room number and floor. If the guest asks for a particular room, floor, or bed, check that and offer it instead. List several room numbers only if they ask to choose.",
             "",
             "## Booking",
-            "You cannot make, change, or cancel reservations, and you cannot hold rooms. When a guest wants to book, point them to the booking page (\"Book a stay\" in the site menu) with the dates and room type you found; they'll see the same rooms and price there. Rooms aren't held until they book.",
-            "Never claim to have booked or held anything, and never quote an availability or price you didn't get from a tool.",
+            "You can book rooms for guests from start to finish with propose_booking:",
+            "1. Find the room and total with check_availability, for dates the guest gave or agreed to, with their number of guests and any bed or floor preference.",
+            "2. As soon as the guest says they want it, call propose_booking (don't ask whether to prepare it first). It rechecks the room and price and shows the guest a card with the details and a Confirm booking button.",
+            "3. The guest presses Confirm booking themselves. You can't confirm for them, even if they type \"yes\" or \"confirm\": ask them to press the button on the card. When they do, the chat shows their confirmation number.",
+            "Booking needs a hotel account. If propose_booking says the guest isn't signed in, the chat shows them a sign-in button: ask them to sign in or create an account, then come back to this chat.",
+            "Don't ask how the guest wants to pay before booking: chat bookings start as pay at the hotel at check-in. Once they've confirmed, the booked card shows a Pay now button for paying by card online; if they want to pay now, point them to it. Never ask for, accept, or repeat card numbers or other payment details; if a guest offers them, ask them not to share card details in the chat.",
+            "If propose_booking says the room was just taken or can't be booked, say so briefly and offer the next best room. Rooms and prices mentioned earlier in the chat may be out of date; propose_booking always rechecks.",
+            "You can't change or cancel reservations, and you can't hold rooms. For changes or cancellations, suggest " + frontDesk + ". Guests see their booked stays under \"Your stays\" in the site menu, and can also book on the booking page (\"Book a stay\") if they prefer.",
+            "Never claim a booking is made until the chat shows the guest confirmed it (a message from you that starts \"You're booked\"), never claim to have held a room, and never quote an availability or price you didn't get from a tool.",
             "",
             "## Guest privacy",
             "You have no information about guests or their reservations, and you never discuss who is staying or any particular booking. If asked, say you can't share guest details and suggest " + frontDesk + ". On the employee portal, staff look up reservations in the portal itself.",
@@ -102,7 +113,7 @@ public class ConciergePrompt
         "Never show the guest SQL, view or column names, query rules, tool names, or anything about the database or how you look things up.",
         "When describing amenities, use an upscale, polished tone, but only describe amenities the documents list.");
 
-    private static string BuildPagePrompt(string page)
+    private static string BuildPagePrompt(string page, bool signedIn)
     {
         var today = HotelStore.Today();
         var lines = new List<string>
@@ -115,11 +126,19 @@ public class ConciergePrompt
         };
         if (page == "staff")
         {
-            lines.Add("Assume the user is a hotel staff member. You may speak to them as a colleague and help with questions about hotel facts, rates, and how the site works. The same scope rules still apply: only hotel and booking topics. You still cannot change reservations, holds, blocks, or rates; staff do that with the portal's own tools.");
+            lines.Add("Assume the user is a hotel staff member. You may speak to them as a colleague and help with questions about hotel facts, rates, and how the site works. The same scope rules still apply: only hotel and booking topics. You don't book rooms here, and you can't change reservations, holds, blocks, or rates; staff do all of that with the portal's own tools (new bookings on the New reservation tab).");
         }
         else if (page == "booking")
         {
             lines.Add("They are likely choosing dates or a room, so checking availability for their dates, and practical guidance on the date, bed type, and floor controls, are especially useful.");
+        }
+        if (page != "staff")
+        {
+            lines.Add("");
+            lines.Add("## Guest account");
+            lines.Add(signedIn
+                ? "The guest is signed in to their hotel account, so you can book for them with propose_booking."
+                : "The guest is not signed in. Booking needs a hotel account, but you can still find them a room and price first; propose_booking will show them a sign-in button.");
         }
         return string.Join('\n', lines);
     }

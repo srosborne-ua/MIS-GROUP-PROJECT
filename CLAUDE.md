@@ -16,13 +16,13 @@ The long-term project is an "AI Concierge for Hospitality Bookings".
 
 **Live:** the Azure site runs on the MySQL database (Zach's PR #2 plus fixes, merged in PR #3).
 
-**Also live:** RAG for the concierge (knowledge documents searched with model-written, validated read-only SQL as `druid_llm_ro`). Shipped ahead of Mr. Rogers' sign-off; he still needs to confirm it (README assumption 25).
+**Also live:** RAG for the concierge (knowledge documents searched with model-written, validated read-only SQL as `druid_llm_ro`), plus room, room-type, rate, and room-unavailability views (no guest data), and availability and exact prices through `HotelStore`. Mr. Rogers has signed off on these.
 
-**Added after that:** the concierge can also query room, room-type, rate, and room-unavailability views (no guest data), and can check availability and exact prices through `HotelStore` (README assumption 27, also pending Mr. Rogers).
+**Added after that:** guest accounts (guests sign in to book), and end-to-end booking in the concierge chat with one Confirm booking button (Mr. Rogers stressed real function calling that books a room). Needs `migrate-006` on each database before the code deploys.
 
 Success definition from the client: the site should make life easy, both for guests booking and for staff managing.
 
-See [README.md](README.md) for the route table, hotel model details, and the running list of assumptions to confirm with Mr. Rogers.
+See [README.md](README.md) for the route table, hotel model details, and the running list of assumptions.
 
 ## Running
 
@@ -47,11 +47,14 @@ The AI concierge is part of the API (`POST api/concierge`). It needs `ANTHROPIC_
 .env.example                  Variable names with placeholders (committed)
 .github/workflows/deploy-azure.yml   Publish and deploy to Azure App Service on push to main
 API/                          ASP.NET Core Web API (.NET 10, controllers); also serves Client/
-├── Controllers/              One controller per resource (rooms, rates, reservations, holds, blocks, demo, auth, employees, shifts)
+├── Controllers/              One controller per resource (rooms, rates, reservations, holds, blocks, demo, auth, employees, shifts, account, concierge)
 ├── Models/HotelModels.cs     Response shapes and request bodies
 ├── Models/EmployeeModels.cs  Staff account shapes and request bodies
+├── Models/GuestAccountModels.cs   Guest account shapes and request bodies
 ├── Services/HotelStore.cs    All booking, availability, and pricing rules, on MySQL (Dapper)
 ├── Services/EmployeeStore.cs Staff accounts, roles, and sign-in rules
+├── Services/GuestAccountStore.cs   Guest accounts and sign-in rules
+├── Services/GuestSession.cs  Guest sign-in cookie (its own scheme, never the default)
 ├── Services/ShiftStore.cs    Staff shift schedule rules
 ├── Services/StaffSession.cs  Sign-in cookie setup and the per-minute session re-check
 ├── Services/PasswordHasher.cs   PBKDF2-SHA256 password hashes
@@ -71,8 +74,10 @@ API/                          ASP.NET Core Web API (.NET 10, controllers); also 
     ├── hotel-info.json       Editable hotel facts loaded into the concierge prompt (TODOs = unknown)
     ├── ConciergePrompt.cs    Server-side system prompt (identity, scope, page context)
     ├── ConciergeService.cs   Anthropic SDK call, history window, streaming, tool loop
-    ├── ConciergeTools.cs     Tool registry (check_availability always; database tools when DB_LLM_RO_CONNECTION is set)
-    ├── AvailabilityTool.cs   check_availability (HotelStore's availability search: open rooms and exact totals)
+    ├── ConciergeTools.cs     Tool registry and ConciergeContext (check_availability and propose_booking always; database tools when DB_LLM_RO_CONNECTION is set)
+    ├── AvailabilityTool.cs   check_availability (HotelStore's availability search: open rooms, suggested room, exact totals)
+    ├── BookingTool.cs        propose_booking (rechecks a room and shows the guest a Confirm booking card; never books)
+    ├── BookingProposals.cs   Signed 10-minute offers, and booking one when the guest presses Confirm
     ├── KnowledgeTools.cs     get_database_schema and query_database (RAG, read-only views)
     └── KnowledgeQueryValidator.cs   Checks model-written SQL before it runs
 Client/
@@ -89,7 +94,7 @@ Client/
 - **No inline styles or scripts** in `index.html`. All styling goes in `index.css`; all behavior goes in `index.js`. `index.html` only links to those two files (plus Google Fonts).
 - **Backend: C# only.** All server code is C# in the ASP.NET Core project in `API/`. Don't add Node, Python, or other backend services or runtimes; new endpoints, AI features, and data access go into this project.
 - **Client: plain HTML, CSS, and JavaScript.** No frameworks, libraries, or build tools in `Client/` unless the user explicitly asks. The backend may use a framework and the Anthropic SDK, but keep dependencies minimal.
-- **Hash-based routing** (`#/home`, `#/search`, `#/booking`, `#/confirmation`, `#/rooms`, `#/staff/...`). Views must be linkable, back/forward must work, and unknown routes fall back to Home. The site must run without special server configuration.
+- **Hash-based routing** (`#/home`, `#/search`, `#/booking`, `#/confirmation`, `#/rooms`, `#/account`, `#/pay`, `#/staff/...`). Views must be linkable, back/forward must work, and unknown routes fall back to Home. The site must run without special server configuration.
 - **Each site area is a view inside `index.html`**: a `<section class="view" data-view="...">` shown/hidden by the router.
 - **The server owns the rules.** Pricing, availability, and booking validation live in `HotelStore`; the client may pre-validate for fast feedback but never decides prices or availability. API errors are `{ "message": "..." }` in the site's voice, shown to the user as-is.
 - **The client never talks to Anthropic or the database directly.** The browser calls our backend; only the backend uses the API key and the database.
@@ -106,7 +111,7 @@ Client/
 - **Business rules belong to the backend:** availability, rate calculation (weekend = Friday/Saturday nights), and "existing reservations keep their booked totals". The client may display them but the server is the source of truth.
 - **The database never stores card data.** The payment rule above applies to the database too: store only paid/not-paid status and the card-on-file opt-in.
 - **Availability is calculated, not stored:** from booking, `maintenance_block` (holds), and event block overlaps. Writes that take a room lock the room rows (`SELECT ... FOR UPDATE`) and re-check overlaps in one transaction, so the same room can't be booked twice.
-- **Seed data:** `seed.sql` loads the hotel, room types, and 120 rooms. "Reset sample data" (`POST api/demo/reset`) clears bookings, guests, holds, blocks, and special rates, restores default rates, and writes the sample data as `druid_app`.
+- **Seed data:** `seed.sql` loads the hotel, room types, and 120 rooms. "Reset sample data" (`POST api/demo/reset`) clears bookings, guests, holds, blocks, and special rates, restores default rates (`HotelStore.DefaultRates`), and writes the sample data as `druid_app`. It keeps staff and guest accounts.
 - **Reset is destructive once data persists.** It needs a signed-in manager, and it only runs in Development or while the server has `ALLOW_SAMPLE_RESET=true`; otherwise it returns 403. It never touches the `employee` table.
 - **Use hotel-local time for "today".** The hotel is in Tuscaloosa (`America/Chicago`) and Azure runs on UTC. Business dates (past-arrival checks, hold/block filters, sample-data dates) use `HotelStore.Today()`, never `DateTime.Now` or `DateTime.Today`.
 - **Guest records aren't rewritten by bookings.** `guest` is one row per email from the first booking; each `booking` keeps its own `guest_first_name` / `guest_last_name` / `guest_phone`, and staff screens read those. A booking with an existing email must not change another reservation's contact details.
@@ -157,14 +162,16 @@ Client/
 - **Transport:** Azure App Service is HTTPS Only. In Production, `Program.cs` applies forwarded headers (last hop only, `ForwardLimit = 1`) so the real client IP and HTTPS scheme are visible, and sends HSTS. Don't trust `X-Forwarded-*` in Development.
 - **Validate on the server:** every date range (including the single-room check), holds and blocks (at most 366 nights, not in the past, within about three years ahead), payment status values, and cancelled-reservation edits. Deletes of holds, blocks, and special rates must report "not found" when 0 rows change.
 - **Concierge spend limits** (keep them when changing the concierge): 6 messages/min and 60/hour per IP, 2 replies in progress per IP, and a site-wide daily cap of 1,500 (`CONCIERGE_DAILY_LIMIT`), all in memory (`ConciergeLimits`, so keep one instance). History is capped at 6 messages and a reply at 6 tool turns; the last turn runs with tools turned off so the model must answer. Don't raise these without considering cost, and keep the Anthropic workspace spend limit in place.
-- **Known gaps:** sequential reservation IDs (the guest confirmation page now shows details only right after booking), no "forgot password" email (a manager resets passwords), no booking-endpoint rate limit, no CSP or clickjacking headers.
+- **Confirm booking presses** (`POST api/concierge/bookings`): 10 per 10 minutes per IP. Guest sign-in and new accounts: 10 per 15 minutes per IP (`guest-sign-in`, separate from staff `sign-in`).
+- **Known gaps:** sequential reservation IDs (only staff or the booking's own guest account can look one up), guest emails aren't verified, no "forgot password" email for guests or staff (a manager resets staff passwords), no rate limit on `POST api/reservations` itself, no CSP or clickjacking headers.
 
-### AI Concierge — planned features
+### AI Concierge
 
-- Current state: Druid AI Assistant answers hotel and booking questions only (from `hotel-info.json`, or from the database views when `DB_LLM_RO_CONNECTION` is set), checks availability and exact prices with `check_availability` (the same `HotelStore` search as the booking page), knows today's hotel-local date, is aware of which site section the user is on (main / booking / employee portal), and is restricted to booking-related topics.
-- Planned: booking rooms directly through the concierge, via Anthropic tool use calling the site's existing booking logic, with explicit guest confirmation.
-- Planned: in-site payment (credit card entry during booking). When it ships, update the payment flag in the hotel info file so the concierge tells guests they can pay online.
-- Until then, the concierge sends guests to the booking page to book. Keep the concierge server code (`ConciergeService` / `ConciergeTools`) structured so tools can be added without a rewrite.
+- Current state: Druid AI Assistant answers hotel and booking questions only (from `hotel-info.json`, or from the database views when `DB_LLM_RO_CONNECTION` is set), checks availability and exact prices with `check_availability` (the same `HotelStore` search as the booking page), knows today's hotel-local date and whether the guest is signed in, is aware of which site section the user is on (main / booking / employee portal), and is restricted to booking-related topics.
+- **Booking end to end:** `propose_booking` rechecks the room and price and emits a `proposal` event (a card with a signed 10-minute token) to the browser; the model never sees the token. Only the guest's Confirm booking press (`POST api/concierge/bookings`, guest session required) books, through `HotelStore.CreateReservationAsync` with `Booker.Concierge`, which locks the room, re-checks it, and refuses a changed total (`BookingConflictException` → 409 with a fresh card). Keep it that way: the model must never be able to book, change, or cancel on its own.
+- Signed-out guests get a `sign_in` event (a sign-in button in the chat). Concierge bookings start due at check-in, and the booked card then offers Pay now (`#/pay?id=…`). The AI doesn't ask how to pay before booking, and the browser blocks card numbers from the chat.
+- Tools get a `ConciergeContext` (page, signed-in guest, `Emit` for browser events). Add tools by implementing `IConciergeTool` and registering it in `Program.cs`.
+- Not built: changing or cancelling bookings in the chat, and a real card processor. `payment.online_payment_available` is true because the site's prototype card form (booking page and Pay now) exists.
 
 ## Code conventions (`index.js`)
 
@@ -190,7 +197,7 @@ The file is one IIFE in `'use strict'` mode, organized into numbered sections. K
 
 - **Floors and rooms:** 3 floors × 40 rooms = 120 rooms, numbered 101–140, 201–240, 301–340. Room number reflects the floor.
 - **Bed mix:** about 1/3 King, remainder split between Double Queen and Twin, plus 2 large Master Suites (currently rooms 339 and 340, counted within the 120).
-- **Default rates:** $100 per weeknight, $150 per weekend night. **Friday and Saturday nights are weekend nights.**
+- **Default rates:** $100 per weeknight, $150 per weekend night; Master Suites $250 / $325. **Friday and Saturday nights are weekend nights.**
 - **Rates are editable in the Staff Portal** and apply to new searches only. Existing reservations keep the totals they were booked at.
 - **Search** returns available rooms plus the total cost for the chosen date range, with filters for **bed type** and **floor**. Fast availability and cost lookup is a top client priority.
 
@@ -205,13 +212,15 @@ Every item must remain covered:
 - Block off rooms for events
 - View and edit cost data and default rates
 
-**Staff sign-in** (README assumptions 30–33, pending Mr. Rogers): employees sign in with email and password; the Employees tab (`#/staff/employees`) has the week's shift schedule and manages accounts.
+**Staff sign-in** (README assumptions 30–33): employees sign in with email and password; the Employees tab (`#/staff/employees`) has the week's shift schedule and manages accounts.
 
 - **Roles:** `manager` or `staff` (`EmployeeStore.Manager` / `Staff`). Manager-only endpoints use `[Authorize(Roles = EmployeeStore.Manager)]`: account changes, shift changes, and Reset sample data. The client hides `[data-manager-only]` controls for staff, but the API is what enforces it. A manager can't change their own role or deactivate themselves.
 - **Shifts** live in `ShiftStore` (`shift` table, ids `S-n`). Adding one locks the employee row and re-checks overlaps in one transaction, like bookings. An end time earlier than the start means overnight.
 
 - **Endpoints are staff only by default.** `Program.cs` sets an authorization fallback policy, so every endpoint needs a signed-in employee unless it has `[AllowAnonymous]`. Only mark an endpoint anonymous if the guest site needs it, and never for anything returning guest data.
-- Staff-only options on anonymous endpoints (`source: "staff"`, `allowPast`) are honored only when `User.Identity.IsAuthenticated`; the controller decides, not the request body.
+- Staff-only options on anonymous endpoints (`source: "staff"`, `allowPast`) are honored only when `StaffSession.IsStaff(User)`; the controller decides, not the request body.
+- **Guest sign-in** is a second cookie scheme (`GuestSession.Scheme`, cookie `druid_guest`), never the default, so it can't pass for staff. Guest endpoints use `[Authorize(AuthenticationSchemes = GuestSession.Scheme)]` or `GuestSession.CurrentAsync()`. Guest 401s carry `signIn: "guest"`, and the client calls `onGuestSignedOut()` for those instead of `onStaffSignedOut()`.
+- Guests must be signed in to book. A guest booking always uses the account's email, and a guest sees only bookings with their `guest_account_id`. `guest_account` is never exposed to `druid_llm_ro` or any `v_*` view.
 - Passwords are hashed with `PasswordHasher` (PBKDF2-SHA256) and never logged or returned. The session is the `druid_staff` HttpOnly, SameSite=Strict cookie; the browser never sees a token.
 - The `employee` table is never exposed to `druid_llm_ro` or any `v_*` view.
 - In the client, any 401 calls `onStaffSignedOut()`, which clears staff data from the page and shows the sign-in form.
@@ -239,6 +248,6 @@ Required on every change:
 - Respect `prefers-reduced-motion`.
 - On view change, focus moves to the view's heading; keep the skip link working.
 
-## Open questions with the client
+## Assumptions
 
-Payment (should guests pay on the site at all?) is still an open question; the current build offers both pay now and pay at the hotel. The full assumptions list lives in the README. When you make a new assumption, add it to that list so the team can confirm it with Mr. Rogers.
+The current build offers pay now (UI only) or pay at the hotel on the booking page, and Pay now (`#/pay?id=…`, `POST api/account/reservations/{id}/pay`) for any of a guest's unpaid upcoming stays; chat bookings start due at check-in. The full assumptions list lives in the README. When you make a new assumption, add it to that list.

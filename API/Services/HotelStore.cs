@@ -15,6 +15,23 @@ public class HotelRuleException(string message, bool notFound = false) : Excepti
     public bool NotFound { get; } = notFound;
 }
 
+// The room was taken, or its price changed, after the guest saw the quote. The
+// concierge's confirm endpoint offers a fresh proposal when it catches this.
+public class BookingConflictException(string message) : HotelRuleException(message);
+
+// Who is making a reservation. The controller decides from the session, never the request body.
+//   Staff:     signed-in staff; past arrivals allowed, any guest email, no payment method.
+//   Guest:     a signed-in guest on the booking page; the booking uses their account email.
+//   Concierge: a signed-in guest who pressed Confirm booking in the chat. QuotedTotal is the
+//              total they saw; if the price has changed since, the booking is refused.
+public record Booker(string Source, int? GuestAccountId, decimal? QuotedTotal = null)
+{
+    public static readonly Booker Staff = new("staff", null);
+    public static Booker Guest(int accountId) => new("web", accountId);
+    public static Booker Concierge(int accountId, decimal quotedTotal) => new("concierge", accountId, quotedTotal);
+    public bool IsStaff => Source == "staff";
+}
+
 // Hotel data in MySQL (API/Database/schema.sql), read and written as druid_app
 // with parameterized queries. Owns every booking, availability, and pricing rule.
 //
@@ -34,7 +51,7 @@ public class HotelStore(Db db)
     private const string HoldPrefix = "H-";
     private const string BlockPrefix = "B-";
 
-    public static readonly Rates DefaultRates = new() { Weekday = 100, Weekend = 150, SuiteWeekday = 100, SuiteWeekend = 150 };
+    public static readonly Rates DefaultRates = new() { Weekday = 100, Weekend = 150, SuiteWeekday = 250, SuiteWeekend = 325 };
 
     // Same check as isEmail() in the client.
     private static readonly Regex EmailPattern = new(@"^[^\s@]+@[^\s@]+\.[^\s@]+$", RegexOptions.Compiled);
@@ -194,19 +211,27 @@ public class HotelStore(Db db)
         var book = await RateBook.LoadAsync(conn, null, checkin, checkout);
         return open
             .GroupBy(r => r.Code)
-            .Select(g => new AvailabilityGroup(
-                g.Key,
-                g.Select(r => new RoomSummary(r.RoomNumber, r.Floor)).ToList(),
-                book.Price(g.Key, checkin, checkout)))
+            .Select(g =>
+            {
+                var rooms = g.Select(r => new RoomSummary(r.RoomNumber, r.Floor)).ToList();
+                return new AvailabilityGroup(g.Key, rooms, book.Price(g.Key, checkin, checkout), SuggestRoom(rooms));
+            })
             .ToList();
     }
 
-    public async Task<RoomCheck> CheckRoomAsync(int number, string? checkinText, string? checkoutText)
+    // The room the booking page and the concierge offer first, so nobody has to pick from
+    // a long list: the highest open floor (quieter, with the view over the oaks), then the
+    // lowest number on it. Guests can still choose another open room.
+    private static RoomSummary SuggestRoom(List<RoomSummary> rooms) =>
+        rooms.OrderByDescending(r => r.Floor).ThenBy(r => r.Number).First();
+
+    // allowPast: the booking page's check allows a past arrival because staff can book
+    // past dates (CreateReservationAsync still refuses it for guests); the concierge
+    // passes false. The stay length cap keeps the quote small.
+    public async Task<RoomCheck> CheckRoomAsync(int number, string? checkinText, string? checkoutText, bool allowPast = true)
     {
         await using var conn = await db.OpenAsync();
-        // Staff can book past dates, so a past arrival is allowed here; CreateReservationAsync
-        // still refuses it for guests. The stay length cap keeps the quote small.
-        var (checkin, checkout) = CheckStayDates(checkinText, checkoutText, allowPast: true, await MaxNightsAsync(conn));
+        var (checkin, checkout) = CheckStayDates(checkinText, checkoutText, allowPast, await MaxNightsAsync(conn));
         var room = await conn.QuerySingleOrDefaultAsync<RoomRow>(RoomSelect + " AND r.room_number = @Number",
             new { Db.HotelId, Number = number })
             ?? throw new HotelRuleException("We couldn’t find that room.", notFound: true);
@@ -331,25 +356,104 @@ public class HotelStore(Db db)
             ?? throw new HotelRuleException(notFound, notFound: true);
     }
 
-    // isStaff: booked by signed-in staff, so past arrivals are allowed. The controller decides.
-    public async Task<Reservation> CreateReservationAsync(CreateReservationRequest input, bool isStaff)
+    // A guest's own reservations: only bookings made from their account. Emails aren't
+    // verified, so matching on email could show someone else's stays. Latest arrival first.
+    // List items leave out nights and messages, like the staff list.
+    public async Task<List<Reservation>> ListAccountReservationsAsync(int accountId)
+    {
+        await using var conn = await db.OpenAsync();
+        var rows = await conn.QueryAsync<BookingRow>(
+            BookingSelect + " WHERE b.guest_account_id = @AccountId ORDER BY b.check_in DESC, b.id DESC LIMIT 50",
+            new { AccountId = accountId });
+        return rows.Select(ToReservation).ToList();
+    }
+
+    // One of a guest's own reservations, with its nights. Messages stay with the staff.
+    public async Task<Reservation> GetAccountReservationAsync(int accountId, string id)
+    {
+        var notFound = new HotelRuleException("We couldn’t find reservation " + id + " on your account.", notFound: true);
+        var bookingId = ParseId(ReservationPrefix, id) ?? throw notFound;
+        await using var conn = await db.OpenAsync();
+        var owned = await conn.ExecuteScalarAsync<int?>(
+            "SELECT 1 FROM booking WHERE id = @Id AND guest_account_id = @AccountId",
+            new { Id = bookingId, AccountId = accountId });
+        if (owned == null) throw notFound;
+        var reservation = (await LoadReservationAsync(conn, bookingId))!;
+        reservation.Messages = [];
+        return reservation;
+    }
+
+    // A guest pays for one of their own upcoming stays online. Card details never reach the
+    // server: the browser checks the card and sends only the card-on-file opt-in, and this
+    // records paid (method "online"). Paying twice, or for a cancelled or past stay, is refused.
+    public async Task<Reservation> PayAccountReservationAsync(int accountId, string id, bool cardOnFile)
+    {
+        var notFound = new HotelRuleException("We couldn’t find reservation " + id + " on your account.", notFound: true);
+        var bookingId = ParseId(ReservationPrefix, id) ?? throw notFound;
+        await using var conn = await db.OpenAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        var booking = await conn.QuerySingleOrDefaultAsync<PayableBooking>(
+            """
+            SELECT b.status, b.check_out, COALESCE(p.status, 'unpaid') AS payment_status
+            FROM booking b LEFT JOIN payment p ON p.booking_id = b.id
+            WHERE b.id = @Id AND b.guest_account_id = @AccountId
+            FOR UPDATE OF b
+            """,
+            new { Id = bookingId, AccountId = accountId }, tx) ?? throw notFound;
+        if (booking.Status == "cancelled") throw new HotelRuleException("That reservation was cancelled, so there’s nothing to pay.");
+        if (booking.PaymentStatus == "paid") throw new HotelRuleException("That stay is already paid in full.");
+        if (DateOnly.FromDateTime(booking.CheckOut) <= Today())
+            throw new HotelRuleException("That stay has ended. Please settle it with the front desk.");
+
+        var now = DateTime.UtcNow;
+        var changed = await conn.ExecuteAsync(
+            """
+            UPDATE payment
+            SET status = 'paid', method = 'online', card_on_file = @CardOnFile, paid_at = @Now, updated_at = @Now
+            WHERE booking_id = @Id AND status = 'unpaid'
+            """,
+            new { Id = bookingId, CardOnFile = cardOnFile, Now = now }, tx);
+        if (changed == 0) throw new HotelRuleException("That stay is already paid in full.");
+        await AddMessageAsync(conn, tx, bookingId, "system",
+            "Paid online by the guest" + (cardOnFile ? ", card kept on file." : "."), now);
+        await tx.CommitAsync();
+
+        var reservation = (await LoadReservationAsync(conn, bookingId))!;
+        reservation.Messages = [];
+        return reservation;
+    }
+
+    // The booker comes from the session (the controller decides), never from the request body.
+    public async Task<Reservation> CreateReservationAsync(CreateReservationRequest input, Booker booker)
     {
         if (input.Room is not { } number) throw new HotelRuleException("Choose a room.");
+        if (!booker.IsStaff && booker.GuestAccountId == null) throw new HotelRuleException(GuestSession.SignInMessage);
 
         await using var conn = await db.OpenAsync();
         await using var tx = await conn.BeginTransactionAsync(IsolationLevel.ReadCommitted);
         var room = (await LockRoomsAsync(conn, tx, [number])).FirstOrDefault(r => r.IsActive)
             ?? throw new HotelRuleException("Choose a room.");
-        var (checkin, checkout) = CheckStayDates(input.Checkin, input.Checkout, allowPast: isStaff, await MaxNightsAsync(conn, tx));
+        var (checkin, checkout) = CheckStayDates(input.Checkin, input.Checkout, allowPast: booker.IsStaff, await MaxNightsAsync(conn, tx));
         var guests = input.Guests is > 0 ? input.Guests.Value : 1;
         if (guests > room.Sleeps) throw new HotelRuleException("That room sleeps " + room.Sleeps + ".");
-        var guest = CheckGuest(input.Guest);
+        // Guests book under their account's email, whatever the form sent.
+        var details = input.Guest ?? new Guest();
+        if (booker.GuestAccountId is { } accountId)
+        {
+            details.Email = await conn.ExecuteScalarAsync<string?>(
+                "SELECT email FROM guest_account WHERE id = @Id", new { Id = accountId }, tx)
+                ?? throw new HotelRuleException(GuestSession.SignInMessage);
+        }
+        var guest = CheckGuest(details);
         if ((await CommitmentsAsync(conn, tx, [number], checkin, checkout)).Count > 0)
-            throw new HotelRuleException("Room " + number + " is no longer open for those dates.");
+            throw new BookingConflictException("Room " + number + " is no longer open for those dates.");
 
         var quote = (await RateBook.LoadAsync(conn, tx, checkin, checkout)).Price(room.Code, checkin, checkout);
+        if (booker.QuotedTotal is { } quoted && quoted != quote.Total)
+            throw new BookingConflictException("The price for those dates has changed from " + Money(quoted) + " to " + Money(quote.Total) + ".");
         var now = DateTime.UtcNow;
-        var paid = input.PaymentStatus == "paid";
+        // Concierge bookings are paid at the hotel: the chat never takes payment.
+        var paid = input.PaymentStatus == "paid" && booker.Source != "concierge";
         var reminder = checkin.AddDays(-2) > Today() ? checkin.AddDays(-2) : Today();
 
         // One guest per email. An existing guest row is reused but never rewritten, so a
@@ -366,16 +470,17 @@ public class HotelStore(Db db)
 
         var bookingId = await conn.ExecuteScalarAsync<int>(
             """
-            INSERT INTO booking (room_id, room_type_id, guest_id, guest_first_name, guest_last_name, guest_phone,
+            INSERT INTO booking (room_id, room_type_id, guest_id, guest_account_id, guest_first_name, guest_last_name, guest_phone,
                                  check_in, check_out, guest_count, status, source, special_requests, total, created_at)
-            VALUES (@RoomId, @RoomTypeId, @GuestId, @FirstName, @LastName, @Phone,
+            VALUES (@RoomId, @RoomTypeId, @GuestId, @AccountId, @FirstName, @LastName, @Phone,
                     @Checkin, @Checkout, @Guests, 'confirmed', @Source, @Requests, @Total, @Now);
             SELECT LAST_INSERT_ID();
             """,
             new
             {
-                RoomId = room.Id, room.RoomTypeId, GuestId = guestId, guest.FirstName, guest.LastName, guest.Phone,
-                Checkin = checkin, Checkout = checkout, Guests = guests, Source = isStaff ? "staff" : "web",
+                RoomId = room.Id, room.RoomTypeId, GuestId = guestId, AccountId = booker.GuestAccountId,
+                guest.FirstName, guest.LastName, guest.Phone,
+                Checkin = checkin, Checkout = checkout, Guests = guests, booker.Source,
                 guest.Requests, quote.Total, Now = now
             }, tx);
 
@@ -396,13 +501,16 @@ public class HotelStore(Db db)
             {
                 BookingId = bookingId,
                 Status = paid ? "paid" : "unpaid",
-                Method = isStaff ? null : paid ? "online" : "at_hotel",
-                input.CardOnFile,
+                Method = booker.IsStaff ? null : paid ? "online" : "at_hotel",
+                CardOnFile = input.CardOnFile && paid,
                 Amount = quote.Total,
                 PaidAt = paid ? now : (DateTime?)null,
                 Now = now
             }, tx);
 
+        if (booker.Source == "concierge")
+            await AddMessageAsync(conn, tx, bookingId, "concierge",
+                "Booked through Druid AI Assistant: the guest confirmed the room, dates, and " + Money(quote.Total) + " total in the chat. Payment due at check-in.", now);
         await AddMessageAsync(conn, tx, bookingId, "system", "Confirmation emailed to " + guest.Email + ".", now);
         await AddMessageAsync(conn, tx, bookingId, "system",
             "Pre-arrival note (parking, directions, check-in time) scheduled for " + FormatDate(reminder) + ".", now);
@@ -629,6 +737,10 @@ public class HotelStore(Db db)
 
     // Matches fmtDate() in the client: "Fri, Oct 16, 2026".
     private static string FormatDate(DateOnly date) => date.ToString("ddd, MMM d, yyyy", CultureInfo.InvariantCulture);
+
+    // Matches money() in the client: "$1,250" or "$99.50".
+    public static string Money(decimal amount) =>
+        amount.ToString(amount == decimal.Truncate(amount) ? "$#,0" : "$#,0.00", CultureInfo.InvariantCulture);
 
     private static decimal RoundRate(decimal value) => Math.Round(value, 2, MidpointRounding.AwayFromZero);
 
@@ -990,6 +1102,13 @@ public class HotelStore(Db db)
         public string Status { get; set; } = "";
         public string Email { get; set; } = "";
         public int Sleeps { get; set; }
+    }
+
+    private class PayableBooking
+    {
+        public string Status { get; set; } = "";
+        public DateTime CheckOut { get; set; }
+        public string PaymentStatus { get; set; } = "";
     }
 
     private class StatsRow
