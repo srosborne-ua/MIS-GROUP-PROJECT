@@ -209,16 +209,13 @@
 
         getRates() { return request('/rates'); },
 
-        saveRates(input) {
-            return request('/rates', {
-                method: 'PUT',
-                body: {
-                    weekday: Number(input.weekday),
-                    weekend: Number(input.weekend),
-                    suiteWeekday: Number(input.suiteWeekday),
-                    suiteWeekend: Number(input.suiteWeekend)
-                }
+        // Default rates per room type: { king: { weekday, weekend }, queen: ..., twin: ..., suite: ... }.
+        saveRates(rates) {
+            const body = {};
+            Object.keys(rates).forEach((type) => {
+                body[type] = { weekday: Number(rates[type].weekday), weekend: Number(rates[type].weekend) };
             });
+            return request('/rates', { method: 'PUT', body: { rates: body } });
         },
 
         addRateOverride(input) {
@@ -1173,9 +1170,11 @@
         const { rates } = await api.getRates();
         const counts = {};
         (await api.getRooms()).forEach((r) => { counts[r.type] = (counts[r.type] || 0) + 1; });
-        $('[data-room-types]').innerHTML = Object.keys(ROOM_TYPES).map((key) => {
+        // Least to most expensive, as the rates come from the server.
+        const order = Object.keys(rates).concat(Object.keys(ROOM_TYPES).filter((key) => !rates[key]));
+        $('[data-room-types]').innerHTML = order.map((key) => {
             const t = ROOM_TYPES[key];
-            const from = key === 'suite' ? Math.min(rates.suiteWeekday, rates.suiteWeekend) : Math.min(rates.weekday, rates.weekend);
+            const from = rates[key] ? Math.min(rates[key].weekday, rates[key].weekend) : 0;
             const photo = ROOM_PHOTOS[key];
             return '<article class="room-type">' +
                 (photo ? '<img class="room-type__image" src="Resources/images/' + photo[0] + '" alt="' + esc(photo[1]) + '" loading="lazy">' : '') +
@@ -1190,8 +1189,9 @@
                 '<p class="fine-print">' + plural(counts[key], 'room') + ' of this kind</p>' +
             '</article>';
         }).join('') + '<p><a class="btn" href="#/search">Check availability</a></p>';
-        $('[data-rate-fact]').textContent = money(rates.weekday) + ' weeknights, ' + money(rates.weekend) + ' Friday and Saturday nights; ' +
-            'master suites ' + money(rates.suiteWeekday) + ' and ' + money(rates.suiteWeekend);
+        const amounts = Object.values(rates).flatMap((r) => [r.weekday, r.weekend]);
+        $('[data-rate-fact]').textContent = money(Math.min(...amounts)) + ' to ' + money(Math.max(...amounts)) +
+            ' a night, by room; Friday and Saturday nights cost a little more';
     }
 
     /* ---------- Guest account ---------- */
@@ -1452,7 +1452,7 @@
         staffUser = null;
         selectedRoom = null;
         ['#staff-stats', '#res-detail', '#res-table', '#res-count', '#room-grid', '#room-panel', '#room-summary',
-            '#holds-list', '#blocks-list', '#overrides-list', '#rate-preview', '#emp-table', '#emp-status',
+            '#holds-list', '#blocks-list', '#overrides-list', '#rate-preview', '#rate-fields', '#emp-table', '#emp-status',
             '#sched-days', '#sched-week', '#er-employee', '#sh-employee'].forEach((sel) => {
             $(sel).innerHTML = '';
         });
@@ -1706,8 +1706,14 @@
         rf.addEventListener('submit', async (e) => {
             e.preventDefault();
             const positive = (v) => (Number(v) > 0 ? '' : 'Enter a positive amount.');
-            if (!validate([[rf.weekday, positive], [rf.weekend, positive], [rf.suiteWeekday, positive], [rf.suiteWeekend, positive]])) return;
-            await api.saveRates({ weekday: rf.weekday.value, weekend: rf.weekend.value, suiteWeekday: rf.suiteWeekday.value, suiteWeekend: rf.suiteWeekend.value });
+            const inputs = $$('#rate-fields input', rf);
+            if (!validate(inputs.map((input) => [input, positive]))) return;
+            const rates = {};
+            inputs.forEach((input) => {
+                rates[input.dataset.type] = rates[input.dataset.type] || {};
+                rates[input.dataset.type][input.dataset.night] = input.value;
+            });
+            await api.saveRates(rates);
             await renderRatesPanel();
             $('#rates-message').textContent = 'Saved. New searches use these rates.';
         });
@@ -2228,8 +2234,17 @@
 
     async function renderRatesPanel() {
         const { rates, overrides } = await api.getRates();
-        const rf = $('#rates-form');
-        Object.keys(rates).forEach((key) => { rf[key].value = rates[key]; });
+        const types = Object.keys(rates);
+        // A weeknight and a weekend field for each room type.
+        $('#rate-fields').innerHTML = types.map((type) => ['weekday', 'weekend'].map((night) => {
+            const id = 'rt-' + type + '-' + night;
+            const name = ROOM_TYPES[type] ? ROOM_TYPES[type].name : type;
+            return '<div class="field">' +
+                '<label for="' + id + '">' + esc(name) + ', ' + (night === 'weekday' ? 'weeknight' : 'weekend night') + ' ($)</label>' +
+                '<input type="number" id="' + id + '" data-type="' + esc(type) + '" data-night="' + night + '" min="1" step="1" required value="' +
+                    esc(rates[type][night]) + '">' +
+            '</div>';
+        }).join('')).join('');
         $('#rates-message').textContent = '';
 
         const t = todayISO();
@@ -2241,16 +2256,18 @@
             : '<p class="empty">No special date rates.</p>';
 
         const preview = await api.getRatePreview(t, 14);
+        const typeName = (type) => (ROOM_TYPES[type] ? ROOM_TYPES[type].name.replace(/^The /, '') : type);
         const kindLabel = (n) => (n.kind === 'special' ? n.label : n.kind === 'weekend' ? 'Weekend' : 'Weeknight');
         $('#rate-preview').innerHTML =
             '<table class="data-table">' +
                 '<caption class="visually-hidden">Nightly rates for the next 14 nights</caption>' +
-                '<thead><tr><th scope="col">Night</th><th scope="col">Rate type</th><th scope="col">Rooms</th><th scope="col">Master suites</th></tr></thead>' +
+                '<thead><tr><th scope="col">Night</th><th scope="col">Rate type</th>' +
+                    types.map((type) => '<th scope="col">' + esc(typeName(type)) + '</th>').join('') + '</tr></thead>' +
                 '<tbody>' + preview.map((p) =>
                     '<tr><td data-label="Night">' + esc(fmtDate(p.date, 'day')) + '</td>' +
-                    '<td data-label="Rate type">' + esc(kindLabel(p.room)) + '</td>' +
-                    '<td data-label="Rooms">' + money(p.room.amount) + '</td>' +
-                    '<td data-label="Master suites">' + money(p.suite.amount) + '</td></tr>').join('') +
+                    '<td data-label="Rate type">' + esc(kindLabel(p.types[types[0]])) + '</td>' +
+                    types.map((type) => '<td data-label="' + esc(typeName(type)) + '">' + money(p.types[type].amount) + '</td>').join('') +
+                    '</tr>').join('') +
                 '</tbody>' +
             '</table>';
     }

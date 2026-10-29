@@ -18,7 +18,7 @@ public class RatesController(HotelStore store) : ControllerBase
 
     // PUT api/rates
     [HttpPut]
-    public Task<Rates> SaveRates(SaveRatesRequest input) => store.SaveRatesAsync(input);
+    public Task<Dictionary<string, TypeRate>> SaveRates(SaveRatesRequest input) => store.SaveRatesAsync(input);
 
     // POST api/rates/overrides
     [HttpPost("overrides")]

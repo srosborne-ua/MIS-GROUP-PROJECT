@@ -68,7 +68,7 @@ How it was set up, for rebuilding it:
 2. As the admin login, run `schema.sql` then `seed.sql`, using a MySQL 8.x client (`brew install mysql-client@8.4`; newer clients can't log in), with `--ssl-mode=REQUIRED`.
 3. Create `druid_app` with `SELECT, INSERT, UPDATE, DELETE` on `mis321` only.
 4. On the App Service, add the environment variable `DB_APP_CONNECTION` = `Server=druid-city-db.mysql.database.azure.com;Database=mis321;User ID=druid_app;Password=…;SslMode=Required;`.
-5. Run `migrate-004-employee.sql`, `migrate-005-roles-and-shifts.sql`, and `migrate-006-guest-accounts-and-suite-rates.sql` (if the database predates them; run 006 **before** deploying the code that needs it), then add the first manager account from your machine with `DB_APP_CONNECTION` pointed at the Azure database: `dotnet run --project API -- add-employee`. Everyone else can then be added from the Employees tab.
+5. Run `migrate-004-employee.sql`, `migrate-005-roles-and-shifts.sql`, and `migrate-006-guest-accounts-and-suite-rates.sql`, and `migrate-007-room-type-rates.sql` (if the database predates them; run 006 **before** deploying the code that needs it), then add the first manager account from your machine with `DB_APP_CONNECTION` pointed at the Azure database: `dotnet run --project API -- add-employee`. Everyone else can then be added from the Employees tab.
 6. To load the sample reservations, add `ALLOW_SAMPLE_RESET=true` to the App Service, sign in, click **Reset sample data** once, then remove it. Without that setting, Reset is turned off on the live site.
 7. For the concierge knowledge base: run `create-llm-ro-user.sql` as the admin login (with a real password in place of `CHANGE_ME`), then add `DB_LLM_RO_CONNECTION` = `Server=druid-city-db.mysql.database.azure.com;Database=mis321;User ID=druid_llm_ro;Password=…;SslMode=Required;` to the App Service. (A database built before the knowledge base needs `migrate-002-knowledge-documents.sql` and `migrate-003-concierge-views.sql` first, without migrate-003's GRANT lines; a database that already has `druid_llm_ro` just needs `migrate-003-concierge-views.sql`.)
 
@@ -152,7 +152,7 @@ The **Reset sample data** link clears every reservation, guest, hold, event bloc
 
 - **Floors:** 3 floors with 40 rooms each, numbered 101–140, 201–240, and 301–340.
 - **Room mix:** 38 King rooms, 41 Double Queen rooms, 39 Twin rooms, and 2 Master Suites (rooms 339 and 340).
-- **Default rates:** $100 per weeknight and $150 per weekend night for King, Double Queen, and Twin rooms; $250 and $325 for the Master Suites. Friday and Saturday count as weekend nights.
+- **Default rates** rise with the room (weeknight / weekend night): Twin $90 / $135, King $110 / $160, Double Queen $130 / $185, Master Suite $250 / $325. Friday and Saturday count as weekend nights. Each room type's rates are edited separately on the Rates tab.
 - **Rate changes:** staff can edit the default rates and add special rates for single dates. Changes apply to new searches only; existing reservations keep the totals they were booked at.
 
 ## Backend and data
@@ -241,14 +241,14 @@ Text the model writes before calling a tool (a note like "Next Friday is Oct 30"
 
 | Ask the concierge | Expected |
 | --- | --- |
-| How much is a Saturday night? | $150 default weekend rate (Friday and Saturday are weekend nights); offers to check the exact total for their dates |
-| (Signed in) Book me a king this Friday for 2 nights, 2 guests. We arrive around 10pm. | One room on the highest open floor, $300; a card with the late arrival as a request; Confirm booking books it and shows the confirmation number |
+| How much is a Saturday night? | The default weekend rate for each room type ($135 to $325; Friday and Saturday are weekend nights); offers to check the exact total for their dates |
+| (Signed in) Book me a king this Friday for 2 nights, 2 guests. We arrive around 10pm. | One room on the highest open floor, $320; a card with the late arrival as a request; Confirm booking books it and shows the confirmation number |
 | (Signed out) Book the master suite Dec 8 to 10, it's our anniversary. | Room 339 and $500, plus a sign-in button; after signing in, "yes" brings up the card |
 | Do you have a king room available? (no dates) | Checks tonight for one night, says which dates it used, offers one room, and asks whether to book or check other dates |
 | My card is 4242 4242 4242 4242 | Not sent; the chat asks them not to type card numbers |
 | What time is check-in? | 3:00 PM (check-out 11:00 AM); cites "Check-in and check-out times" |
 | How many rooms of each type do you have? | Exact counts: 38 King, 41 Double Queen, 39 Twin, 2 Master Suites |
-| Is there a king room open next Friday and Saturday? How much? | Open king rooms for those exact dates and the total ($300 at default rates), matching the booking page |
+| Is there a king room open next Friday and Saturday? How much? | Open king rooms for those exact dates and the total ($320 at default rates), matching the booking page |
 | We're 4 people, Nov 13 to 15, second floor. Options? | The open Double Queen room numbers on floor 2 and the total, matching `GET api/rooms/availability` |
 | How many rooms are booked tonight? | Counts that match the Staff Portal room board |
 | How many twin rooms are on each floor? | 13 per floor (from its own `GROUP BY` query) |
@@ -300,7 +300,7 @@ A refused message gets a friendly reply and the rest of the site keeps working. 
 
 1. **Suites:** the two Master Suites are rooms 339 and 340 and count toward the 120 rooms; they are not additional rooms.
 2. **Bed types:** "Queen/twin" means two separate room types. Double Queen rooms have two queen beds and sleep 4. Twin rooms have two twin beds and sleep 2. King rooms have one king bed and sleep 2.
-3. **Suite rates:** the Master Suites cost more than the other rooms: $250 per weeknight and $325 per weekend night by default (the King stays $100/$150). Staff can change suite rates separately on the Rates tab.
+3. **Rates by room type:** every room type has its own default rates, rising with the room: Twin $90 / $135, King $110 / $160, Double Queen $130 / $185 (bigger, sleeps 4), Master Suite $250 / $325 (weeknight / weekend). Staff change each type separately on the Rates tab. A special date rate still sets one price for every room type on that night.
 4. **Special date rates:** we read "view/edit cost data" to include one-night special rates, for example on game days. A special rate applies to every room on that night.
 5. **Rate changes:** new rates do not change the totals of existing reservations.
 6. **Taxes:** prices are shown before taxes; lodging tax is not yet included.

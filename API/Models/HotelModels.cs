@@ -9,17 +9,13 @@ public record Room(int Number, int Floor, string Type);
 
 public record RoomSummary(int Number, int Floor);
 
-public class Rates
-{
-    public decimal Weekday { get; set; }
-    public decimal Weekend { get; set; }
-    public decimal SuiteWeekday { get; set; }
-    public decimal SuiteWeekend { get; set; }
-}
+// Default nightly rates for one room type. Weekend = Friday and Saturday nights.
+public record TypeRate(decimal Weekday, decimal Weekend);
 
 public record RateOverride(DateOnly Date, decimal Amount, string Label);
 
-public record RatesResponse(Rates Rates, List<RateOverride> Overrides);
+// Rates: keyed by room type code (king, queen, twin, suite).
+public record RatesResponse(Dictionary<string, TypeRate> Rates, List<RateOverride> Overrides);
 
 // kind: "weekday" | "weekend" | "special". Label is only set for special rates.
 public record NightRate(DateOnly Date, decimal Amount, string Kind, string? Label = null);
@@ -31,7 +27,8 @@ public record AvailabilityGroup(string Type, List<RoomSummary> Rooms, Quote Quot
 
 public record RoomCheck(Room Room, bool Available, Quote Quote);
 
-public record RatePreviewDay(DateOnly Date, NightRate Room, NightRate Suite);
+// Types: the night's rate for each room type, keyed by type code.
+public record RatePreviewDay(DateOnly Date, Dictionary<string, NightRate> Types);
 
 public class Guest
 {
@@ -93,12 +90,16 @@ public class AvailabilityQuery
     public bool AllowPast { get; set; }
 }
 
+// Rates: every room type's default rates, keyed by type code.
 public class SaveRatesRequest
+{
+    public Dictionary<string, RateInput>? Rates { get; set; }
+}
+
+public class RateInput
 {
     public decimal? Weekday { get; set; }
     public decimal? Weekend { get; set; }
-    public decimal? SuiteWeekday { get; set; }
-    public decimal? SuiteWeekend { get; set; }
 }
 
 public class RateOverrideRequest

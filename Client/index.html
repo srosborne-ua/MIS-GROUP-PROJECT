@@ -706,25 +706,9 @@
                 <form id="rates-form" class="staff-form" novalidate>
                     <fieldset class="fieldset">
                         <legend>Default nightly rates</legend>
-                        <p class="hint">Weekend rates apply to Friday and Saturday nights. Changes apply to new searches and bookings; existing reservations keep their booked totals.</p>
-                        <div class="grid-2">
-                            <div class="field">
-                                <label for="rt-weekday">Rooms, weeknight ($)</label>
-                                <input type="number" id="rt-weekday" name="weekday" min="1" step="1" required>
-                            </div>
-                            <div class="field">
-                                <label for="rt-weekend">Rooms, weekend night ($)</label>
-                                <input type="number" id="rt-weekend" name="weekend" min="1" step="1" required>
-                            </div>
-                            <div class="field">
-                                <label for="rt-suite-weekday">Master suites, weeknight ($)</label>
-                                <input type="number" id="rt-suite-weekday" name="suiteWeekday" min="1" step="1" required>
-                            </div>
-                            <div class="field">
-                                <label for="rt-suite-weekend">Master suites, weekend night ($)</label>
-                                <input type="number" id="rt-suite-weekend" name="suiteWeekend" min="1" step="1" required>
-                            </div>
-                        </div>
+                        <p class="hint">Each room type has its own rates. Weekend rates apply to Friday and Saturday nights. Changes apply to new searches and bookings; existing reservations keep their booked totals.</p>
+                        <!-- One weeknight and one weekend field per room type, filled in by renderRatesPanel(). -->
+                        <div class="grid-2" id="rate-fields"></div>
                     </fieldset>
                     <div class="form-actions">
                         <button type="submit" class="btn">Save rates</button>

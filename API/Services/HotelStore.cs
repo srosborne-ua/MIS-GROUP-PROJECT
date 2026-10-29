@@ -51,7 +51,14 @@ public class HotelStore(Db db)
     private const string HoldPrefix = "H-";
     private const string BlockPrefix = "B-";
 
-    public static readonly Rates DefaultRates = new() { Weekday = 100, Weekend = 150, SuiteWeekday = 250, SuiteWeekend = 325 };
+    // Each room type has its own rates, rising with the room: Twin, King, Double Queen, Master Suite.
+    public static readonly IReadOnlyDictionary<string, TypeRate> DefaultRates = new Dictionary<string, TypeRate>
+    {
+        ["twin"] = new(90, 135),
+        ["king"] = new(110, 160),
+        ["queen"] = new(130, 185),
+        ["suite"] = new(250, 325)
+    };
 
     // Same check as isEmail() in the client.
     private static readonly Regex EmailPattern = new(@"^[^\s@]+@[^\s@]+\.[^\s@]+$", RegexOptions.Compiled);
@@ -87,31 +94,27 @@ public class HotelStore(Db db)
         return new RatesResponse(await LoadRatesAsync(conn), await LoadOverridesAsync(conn));
     }
 
-    // King, Double Queen, and Twin share the standard rates; suites have their own.
-    public async Task<Rates> SaveRatesAsync(SaveRatesRequest input)
+    // Every room type has its own weeknight and weekend rate; all of them are saved together.
+    public async Task<Dictionary<string, TypeRate>> SaveRatesAsync(SaveRatesRequest input)
     {
-        decimal?[] values = [input.Weekday, input.Weekend, input.SuiteWeekday, input.SuiteWeekend];
-        if (values.Any(v => v is not > 0)) throw new HotelRuleException("Every rate must be a positive number.");
-        var rates = new Rates
-        {
-            Weekday = RoundRate(input.Weekday!.Value),
-            Weekend = RoundRate(input.Weekend!.Value),
-            SuiteWeekday = RoundRate(input.SuiteWeekday!.Value),
-            SuiteWeekend = RoundRate(input.SuiteWeekend!.Value)
-        };
-        if (new[] { rates.Weekday, rates.Weekend, rates.SuiteWeekday, rates.SuiteWeekend }.Any(v => v > MaxRate))
-            throw new HotelRuleException("Every rate must be under $1,000,000.");
-
         await using var conn = await db.OpenAsync();
         await using var tx = await conn.BeginTransactionAsync();
+        var codes = (await conn.QueryAsync<string>(
+            "SELECT code FROM room_type WHERE hotel_id = @HotelId ORDER BY id FOR UPDATE", new { Db.HotelId }, tx)).ToList();
+        if (codes.Count == 0) throw NotLoaded();
+
+        var rates = new Dictionary<string, TypeRate>();
+        foreach (var code in codes)
+        {
+            if (input.Rates?.GetValueOrDefault(code) is not { Weekday: > 0, Weekend: > 0 } given)
+                throw new HotelRuleException("Enter a positive weeknight and weekend rate for every room type.");
+            var rate = new TypeRate(RoundRate(given.Weekday!.Value), RoundRate(given.Weekend!.Value));
+            if (rate.Weekday > MaxRate || rate.Weekend > MaxRate) throw new HotelRuleException("Every rate must be under $1,000,000.");
+            rates[code] = rate;
+        }
         await conn.ExecuteAsync(
-            """
-            UPDATE room_type SET weekday_rate = @Weekday, weekend_rate = @Weekend
-                WHERE hotel_id = @HotelId AND code <> 'suite';
-            UPDATE room_type SET weekday_rate = @SuiteWeekday, weekend_rate = @SuiteWeekend
-                WHERE hotel_id = @HotelId AND code = 'suite';
-            """,
-            new { Db.HotelId, rates.Weekday, rates.Weekend, rates.SuiteWeekday, rates.SuiteWeekend }, tx);
+            "UPDATE room_type SET weekday_rate = @Weekday, weekend_rate = @Weekend WHERE hotel_id = @HotelId AND code = @Code",
+            rates.Select(r => new { Db.HotelId, Code = r.Key, r.Value.Weekday, r.Value.Weekend }), tx);
         await tx.CommitAsync();
         return rates;
     }
@@ -176,7 +179,7 @@ public class HotelStore(Db db)
         var book = await RateBook.LoadAsync(conn, null, start, start.AddDays(count));
         return Enumerable.Range(0, count)
             .Select(i => start.AddDays(i))
-            .Select(d => new RatePreviewDay(d, book.Night("king", d), book.Night("suite", d)))
+            .Select(d => new RatePreviewDay(d, book.Codes.ToDictionary(code => code, code => book.Night(code, d))))
             .ToList();
     }
 
@@ -204,7 +207,7 @@ public class HotelStore(Db db)
               AND NOT EXISTS (SELECT 1 FROM event_block_room ebr JOIN event_block e ON e.id = ebr.event_block_id
                               WHERE ebr.room_id = r.id
                                 AND e.first_night < @Checkout AND e.last_night >= @Checkin)
-            ORDER BY t.id, r.room_number
+            ORDER BY t.weekday_rate, t.id, r.room_number
             """,
             new { Db.HotelId, Guests = guests, Bed = bed, Floor = floor, Checkin = checkin, Checkout = checkout });
 
@@ -816,19 +819,13 @@ public class HotelStore(Db db)
         await conn.ExecuteScalarAsync<int?>("SELECT max_online_nights FROM hotel WHERE id = @HotelId", new { Db.HotelId }, tx)
             ?? throw NotLoaded();
 
-    private static async Task<Rates> LoadRatesAsync(MySqlConnection conn)
+    private static async Task<Dictionary<string, TypeRate>> LoadRatesAsync(MySqlConnection conn)
     {
         var types = (await conn.QueryAsync<RoomTypeRow>(
-            "SELECT code, weekday_rate, weekend_rate FROM room_type WHERE hotel_id = @HotelId AND code IN ('king', 'suite')",
-            new { Db.HotelId })).ToDictionary(t => t.Code);
-        if (!types.TryGetValue("king", out var standard) || !types.TryGetValue("suite", out var suite)) throw NotLoaded();
-        return new Rates
-        {
-            Weekday = standard.WeekdayRate,
-            Weekend = standard.WeekendRate,
-            SuiteWeekday = suite.WeekdayRate,
-            SuiteWeekend = suite.WeekendRate
-        };
+            "SELECT code, weekday_rate, weekend_rate FROM room_type WHERE hotel_id = @HotelId ORDER BY weekday_rate, id",
+            new { Db.HotelId })).ToList();
+        if (types.Count == 0) throw NotLoaded();
+        return types.ToDictionary(t => t.Code, t => new TypeRate(t.WeekdayRate, t.WeekendRate));
     }
 
     // Special rates for every room type, one entry per night.
@@ -987,17 +984,10 @@ public class HotelStore(Db db)
             return new RateBook(types, seasonal);
         }
 
-        public static RateBook FromDefaults(Rates rates)
-        {
-            RoomTypeRow Standard(string code) => new() { Code = code, WeekdayRate = rates.Weekday, WeekendRate = rates.Weekend };
-            return new RateBook(new()
-            {
-                ["king"] = Standard("king"),
-                ["queen"] = Standard("queen"),
-                ["twin"] = Standard("twin"),
-                ["suite"] = new() { Code = "suite", WeekdayRate = rates.SuiteWeekday, WeekendRate = rates.SuiteWeekend }
-            }, []);
-        }
+        public static RateBook FromDefaults(IReadOnlyDictionary<string, TypeRate> rates) =>
+            new(rates.ToDictionary(r => r.Key, r => new RoomTypeRow { Code = r.Key, WeekdayRate = r.Value.Weekday, WeekendRate = r.Value.Weekend }), []);
+
+        public IEnumerable<string> Codes => types.Keys;
 
         // A special rate for this room type wins, then one for every room type, then
         // the weekday or weekend rate. Friday and Saturday nights are weekend nights.

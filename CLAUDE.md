@@ -197,7 +197,7 @@ The file is one IIFE in `'use strict'` mode, organized into numbered sections. K
 
 - **Floors and rooms:** 3 floors × 40 rooms = 120 rooms, numbered 101–140, 201–240, 301–340. Room number reflects the floor.
 - **Bed mix:** about 1/3 King, remainder split between Double Queen and Twin, plus 2 large Master Suites (currently rooms 339 and 340, counted within the 120).
-- **Default rates:** $100 per weeknight, $150 per weekend night; Master Suites $250 / $325. **Friday and Saturday nights are weekend nights.**
+- **Default rates** rise with the room (weeknight / weekend): Twin $90 / $135, King $110 / $160, Double Queen $130 / $185, Master Suite $250 / $325 (`HotelStore.DefaultRates`; each type is edited separately). **Friday and Saturday nights are weekend nights.**
 - **Rates are editable in the Staff Portal** and apply to new searches only. Existing reservations keep the totals they were booked at.
 - **Search** returns available rooms plus the total cost for the chosen date range, with filters for **bed type** and **floor**. Fast availability and cost lookup is a top client priority.
 

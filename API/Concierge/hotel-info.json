@@ -30,12 +30,11 @@
     },
 
     "rates": {
-        "weeknight_default": "$100 per night (The King, The Double Queen, The Twin)",
-        "weekend_default": "$150 per night (The King, The Double Queen, The Twin)",
+        "default_rates": "Rates rise with the room (weeknight / weekend night): The Twin $90 / $135, The King $110 / $160, The Double Queen $130 / $185, The Master Suite $250 / $325.",
         "weekend_definition": "Friday and Saturday nights are weekend nights.",
         "rate_notes": "These are default rates. Staff can adjust rates (including special rates for specific dates) in the employee portal, so the exact total for a stay is always shown on the booking page after choosing dates. Prices shown are before taxes.",
         "taxes_and_fees": "TODO: lodging tax and any fees",
-        "suite_rates": "The Master Suite: $250 per weeknight and $325 per weekend night by default."
+        "suite_rates": "The Master Suite: $250 per weeknight and $325 per weekend night by default, the most of any room."
     },
 
     "booking": {

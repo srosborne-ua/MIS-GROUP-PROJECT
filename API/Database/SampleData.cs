@@ -53,7 +53,7 @@ public static class SampleData
     // Clears every booking, guest, hold, event block, and special rate, restores the
     // default rates, and writes the sample data, all in one transaction. Rooms and
     // room types are left alone. `price` must quote stays at the default rates.
-    public static async Task ResetAsync(Db db, Rates defaults, DateOnly today, Func<string, DateOnly, DateOnly, Quote> price)
+    public static async Task ResetAsync(Db db, IReadOnlyDictionary<string, TypeRate> defaults, DateOnly today, Func<string, DateOnly, DateOnly, Quote> price)
     {
         await using var conn = await db.OpenAsync();
         await using var tx = await conn.BeginTransactionAsync();
@@ -76,12 +76,11 @@ public static class SampleData
             DELETE FROM maintenance_block;
             DELETE FROM booking;
             DELETE FROM guest;
-            UPDATE room_type SET weekday_rate = @Weekday, weekend_rate = @Weekend
-                WHERE hotel_id = @HotelId AND code <> 'suite';
-            UPDATE room_type SET weekday_rate = @SuiteWeekday, weekend_rate = @SuiteWeekend
-                WHERE hotel_id = @HotelId AND code = 'suite';
             """,
-            new { Db.HotelId, defaults.Weekday, defaults.Weekend, defaults.SuiteWeekday, defaults.SuiteWeekend }, tx);
+            new { Db.HotelId }, tx);
+        await conn.ExecuteAsync(
+            "UPDATE room_type SET weekday_rate = @Weekday, weekend_rate = @Weekend WHERE hotel_id = @HotelId AND code = @Code",
+            defaults.Select(r => new { Db.HotelId, Code = r.Key, r.Value.Weekday, r.Value.Weekend }), tx);
 
         var now = DateTime.UtcNow;
         for (var i = 0; i < Reservations.Length; i++)

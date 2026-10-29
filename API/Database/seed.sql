@@ -15,14 +15,15 @@ START TRANSACTION;
 INSERT INTO hotel (id, name, city, state, check_in_time, check_out_time, max_online_nights)
 VALUES (1, 'Druid City Hotel', 'Tuscaloosa', 'AL', '15:00:00', '11:00:00', 30);
 
--- Default rates: $100 weeknight, $150 weekend (Friday and Saturday nights); master suites $250 / $325.
+-- Default rates (weeknight / weekend, Friday and Saturday nights) rise with the room:
+-- Twin $90 / $135, King $110 / $160, Double Queen $130 / $185, Master Suite $250 / $325.
 INSERT INTO room_type (hotel_id, code, name, bed, bed_label, sleeps, size_sqft, blurb, weekday_rate, weekend_rate) VALUES
 (1, 'king',  'The King',         'king',  'One king bed',                       2, 340,
-    'A generous king, a writing desk by the window, and a rain shower built for lingering.', 100.00, 150.00),
+    'A generous king, a writing desk by the window, and a rain shower built for lingering.', 110.00, 160.00),
 (1, 'queen', 'The Double Queen', 'queen', 'Two queen beds',                     4, 380,
-    'Room for the whole party: two queens, a lounge chair, and space to spread out on game weekend.', 100.00, 150.00),
+    'Room for the whole party: two queens, a lounge chair, and space to spread out on game weekend.', 130.00, 185.00),
 (1, 'twin',  'The Twin',         'twin',  'Two twin beds',                      2, 300,
-    'Two crisply made twins for colleagues, siblings, or old roommates back for homecoming.', 100.00, 150.00),
+    'Two crisply made twins for colleagues, siblings, or old roommates back for homecoming.', 90.00, 135.00),
 (1, 'suite', 'The Master Suite', 'king',  'One king bed and a separate parlor', 4, 850,
     'Just two of them, on the top floor: a parlor for entertaining, a soaking tub, and a view over the oaks.', 250.00, 325.00);
 
@@ -64,7 +65,7 @@ INSERT INTO knowledge_document (title, content) VALUES
     ('House policies: smoking and minimum age',
      'Smoking policy: TODO (not confirmed yet). Minimum check-in age: TODO (not confirmed yet).'),
     ('Rates and weekend nights',
-     'Default rates are $100 per weeknight and $150 per weekend night for The King, The Double Queen, and The Twin, and $250 per weeknight and $325 per weekend night for The Master Suite. Friday and Saturday nights are weekend nights. These are default rates: staff can adjust rates, including special rates for specific dates, so the exact total for a stay is always shown on the booking page after choosing dates, and the concierge can look up exact totals too. New rates apply to new searches only; existing reservations keep the totals they were booked at. Prices shown are before taxes. Lodging tax and fees: TODO (not confirmed yet).'),
+     'Default nightly rates rise with the room. The Twin: $90 per weeknight and $135 per weekend night. The King: $110 and $160. The Double Queen: $130 and $185. The Master Suite: $250 and $325. Friday and Saturday nights are weekend nights. These are default rates: staff can adjust rates, including special rates for specific dates, so the exact total for a stay is always shown on the booking page after choosing dates, and the concierge can look up exact totals too. New rates apply to new searches only; existing reservations keep the totals they were booked at. Prices shown are before taxes. Lodging tax and fees: TODO (not confirmed yet).'),
     ('Rooms and bed types',
      'The hotel has 120 rooms on 3 floors, 40 rooms per floor. Room numbers start with the floor: 101-140 on the first floor, 201-240 on the second, 301-340 on the third. About one third of rooms have a king bed; the rest are split between queen rooms and twin rooms. Room types: The King: one king bed, 340 sq ft, sleeps 2. A generous king, a writing desk by the window, and a rain shower built for lingering. The Double Queen: two queen beds, 380 sq ft, sleeps 4. Room for the whole party: two queens, a lounge chair, and space to spread out on game weekend. The Twin: two twin beds, 300 sq ft, sleeps 2. Two crisply made twins for colleagues, siblings, or old roommates back for homecoming. The Master Suite: one king bed and a separate parlor, 850 sq ft, sleeps 4. Just two of them, on the top floor: a parlor for entertaining, a soaking tub, and a view over the oaks. The 2 master suites count within the 120 rooms.'),
     ('How to book',
