@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using API.Models;
 using API.Services;
 using Microsoft.AspNetCore.DataProtection;
@@ -13,19 +14,37 @@ public record BookingProposal(string Token, int Room, int Floor, string Type, st
     DateOnly Checkin, DateOnly Checkout, int Guests, string Requests, string GuestName,
     List<NightRate> Nights, decimal Total, int ExpiresInSeconds);
 
+// An open offer the guest's latest message may be accepting. The model sees Summary; Token
+// stays on the server, for ConfirmBookingTool.
+public record ConfirmableOffer(string Token, string Summary);
+
 // Concierge bookings happen in two steps, so the model can never book on its own:
 //   1. propose_booking (called by the model) re-checks the room and prices the stay, and
 //      CreateAsync signs that exact offer into a token: account, room, dates, guests,
 //      requests, and total, good for 10 minutes. The browser shows it as a card with a
 //      Confirm booking button.
-//   2. The guest presses the button. The browser posts the token to
-//      POST api/concierge/bookings, and ConfirmAsync books it through
+//   2. The guest accepts, in one of two ways, and ConfirmAsync books it through
 //      HotelStore.CreateReservationAsync, which locks the room, re-checks it, and refuses
-//      if the total changed since the guest saw it (BookingConflictException).
+//      if the total changed since the guest saw it (BookingConflictException):
+//      - The guest presses the button. The browser posts the token to
+//        POST api/concierge/bookings.
+//      - The guest replies "yes" as the very next message. The browser sends the token with
+//        that message, and only if Confirmable agrees it's an acceptance does the model get
+//        confirm_booking, which takes no arguments and books that offer unchanged.
 // Tokens are signed with ASP.NET Core Data Protection (the same keys as the sign-in
 // cookies), so they can't be edited or forged, and only work for the account they were made for.
 public class BookingProposals(HotelStore store, IDataProtectionProvider protection)
 {
+    private const int MaxAcceptanceChars = 120;
+
+    private static readonly Regex AcceptWords = new(
+        @"\b(yes|yep|yup|yeah|sure|ok|okay|confirm|confirmed|book it|go ahead|do it|sounds good|sounds great|looks good|looks great|perfect)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly Regex HesitantWords = new(
+        @"\b(no|nope|not|\w+n['’]t|dont|cant|wont|but|wait|actually|change|make|instead|different|cancel|later|maybe|hold)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(10);
     public const string Expired = "This offer has expired. Ask the assistant again and it will recheck the room and price.";
     private const int MaxRequestChars = 1000;
@@ -60,6 +79,27 @@ public class BookingProposals(HotelStore store, IDataProtectionProvider protecti
         return new BookingProposal(token, room, check.Room.Floor, check.Room.Type, type.Name, type.BedLabel,
             offer.Checkin, offer.Checkout, guests, note, guest.FirstName + " " + guest.LastName,
             nights, offer.Total, (int)Lifetime.TotalSeconds);
+    }
+
+    // Whether a chat message could be accepting an offer: short, says yes, and has no question
+    // or hesitation. This is the code's half of the check. The model still has to read it as
+    // accepting the offer unchanged ("yes, three nights" passes here, and shouldn't book).
+    public static bool IsAcceptance(string? message) =>
+        !string.IsNullOrWhiteSpace(message)
+        && message.Length <= MaxAcceptanceChars
+        && !message.Contains('?')
+        && AcceptWords.IsMatch(message)
+        && !HesitantWords.IsMatch(message);
+
+    // The offer the guest's latest message can confirm, or null if there's no live offer for
+    // this account or the message isn't an acceptance.
+    public ConfirmableOffer? Confirmable(GuestAccount? guest, string? token, string? latestMessage)
+    {
+        if (guest is null || !IsAcceptance(latestMessage)) return null;
+        if (Read(guest, token) is not { } offer || _used.ContainsKey(offer.Id)) return null;
+        var summary = "Room " + offer.Room + ", arriving " + Iso(offer.Checkin) + ", departing " + Iso(offer.Checkout) + ", " +
+                      offer.Guests + (offer.Guests == 1 ? " guest" : " guests") + ", " + HotelStore.Money(offer.Total) + " in total before taxes.";
+        return new ConfirmableOffer(token!, summary);
     }
 
     // Books the offer the guest confirmed.

@@ -13,6 +13,7 @@ namespace API.Controllers;
 // { "type": "text", "text": "..." } | { "type": "reset" } | { "type": "done" } | { "type": "error", "message": "..." }
 // | { "type": "proposal", "proposal": { ... } }   a booking card to confirm (BookingProposals.cs)
 // | { "type": "sign_in" }                         booking needs the guest to sign in first
+// | { "type": "booked", "reservation": { ... } }  the guest replied yes and the card's offer is booked
 [ApiController]
 [Route("api/concierge")]
 public class ConciergeController(ConciergeService concierge, ConciergeLimits limits, BookingProposals proposals,
@@ -63,7 +64,11 @@ public class ConciergeController(ConciergeService concierge, ConciergeLimits lim
         {
             // The guest session, if any, so propose_booking knows who would be booking.
             var guest = await GuestSession.CurrentAsync(HttpContext);
-            await Stream(ConciergePrompt.NormalizePage(input.Page), guest, messages);
+            var page = ConciergePrompt.NormalizePage(input.Page);
+            // CleanHistory has checked there is a last message from the guest.
+            var latest = input.Messages!.Last(m => !string.IsNullOrWhiteSpace(m.Content)).Content;
+            var offer = page == "staff" ? null : proposals.Confirmable(guest, input.OfferToken, latest);
+            await Stream(page, guest, offer, messages);
         }
         finally
         {
@@ -72,8 +77,8 @@ public class ConciergeController(ConciergeService concierge, ConciergeLimits lim
     }
 
     // POST api/concierge/bookings: the guest pressed Confirm booking on a card in the chat.
-    // Only this button books; the model can't call it. A room taken (or repriced) since the
-    // card was shown returns 409 with a fresh card (same room at the new price, or the same kind of room).
+    // The model can't call this. A room taken (or repriced) since the card was shown returns
+    // 409 with a fresh card (same room at the new price, or the same kind of room).
     [HttpPost("bookings")]
     [Authorize(AuthenticationSchemes = GuestSession.Scheme)]
     [EnableRateLimiting("booking")]
@@ -91,7 +96,7 @@ public class ConciergeController(ConciergeService concierge, ConciergeLimits lim
         }
     }
 
-    private async Task Stream(string page, GuestAccount? guest, List<Anthropic.Models.Beta.Messages.BetaMessageParam> messages)
+    private async Task Stream(string page, GuestAccount? guest, ConfirmableOffer? offer, List<Anthropic.Models.Beta.Messages.BetaMessageParam> messages)
     {
         Response.ContentType = "application/x-ndjson; charset=utf-8";
         Response.Headers.CacheControl = "no-store";
@@ -105,7 +110,7 @@ public class ConciergeController(ConciergeService concierge, ConciergeLimits lim
 
         try
         {
-            var context = new ConciergeContext(page, guest, Send);
+            var context = new ConciergeContext(page, guest, Send, offer);
             var status = await concierge.Run(messages, context,
                 text => Send(new { type = "text", text }),
                 () => Send(new { type = "reset" }),

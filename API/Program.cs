@@ -60,6 +60,7 @@ builder.Services.AddSingleton<IConciergeTool, CheckAvailabilityTool>();
 // Booking: the model proposes, and the guest's Confirm booking button books (POST api/concierge/bookings).
 builder.Services.AddSingleton<BookingProposals>();
 builder.Services.AddSingleton<IConciergeTool, ProposeBookingTool>();
+builder.Services.AddSingleton<IConciergeTool, ConfirmBookingTool>();
 // Database lookups (RAG): read-only SELECTs as druid_llm_ro, only when DB_LLM_RO_CONNECTION is set.
 builder.Services.AddSingleton<ReadOnlyDb>();
 if (ReadOnlyDb.IsConfigured)

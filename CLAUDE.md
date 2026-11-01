@@ -18,7 +18,7 @@ The long-term project is an "AI Concierge for Hospitality Bookings".
 
 **Also live:** RAG for the concierge (knowledge documents searched with model-written, validated read-only SQL as `druid_llm_ro`), plus room, room-type, rate, and room-unavailability views (no guest data), and availability and exact prices through `HotelStore`. Mr. Rogers has signed off on these.
 
-**Added after that:** guest accounts (guests sign in to book), and end-to-end booking in the concierge chat with one Confirm booking button (Mr. Rogers stressed real function calling that books a room). Needs `migrate-006` on each database before the code deploys.
+**Added after that:** guest accounts (guests sign in to book), and end-to-end booking in the concierge chat, confirmed with one Confirm booking button or by replying yes (Mr. Rogers stressed real function calling that books a room). `migrate-006` and `migrate-007` (per-room-type rates) have been run on Azure; any other database needs them before this code deploys.
 
 Success definition from the client: the site should make life easy, both for guests booking and for staff managing.
 
@@ -32,7 +32,7 @@ The API serves the client too (locally straight from `Client/`; published builds
 dotnet run --project API --launch-profile http          # site and API on http://localhost:5269
 ```
 
-**Deployment:** Azure App Service (Linux, single instance) via [.github/workflows/deploy-azure.yml](.github/workflows/deploy-azure.yml) on every push to `main`. On Azure, `ANTHROPIC_API_KEY` is an App Service environment variable. Setup steps are in the README.
+**Deployment:** Azure App Service (Linux, single instance) via [.github/workflows/deploy-azure.yml](.github/workflows/deploy-azure.yml) on every push to `main`. **A push to `main` is a production deploy within about a minute.** If the change needs a migration, run it on Azure *first* (the code that expects new tables or columns fails every booking until it runs), and say so before anyone pushes. On Azure, `ANTHROPIC_API_KEY` is an App Service environment variable. Setup steps are in the README.
 
 There is no test suite or linter. Verify changes by loading the site and walking through the affected views on both a narrow (phone) and wide (desktop) viewport.
 
@@ -74,10 +74,10 @@ API/                          ASP.NET Core Web API (.NET 10, controllers); also 
     ├── hotel-info.json       Editable hotel facts loaded into the concierge prompt (TODOs = unknown)
     ├── ConciergePrompt.cs    Server-side system prompt (identity, scope, page context)
     ├── ConciergeService.cs   Anthropic SDK call, history window, streaming, tool loop
-    ├── ConciergeTools.cs     Tool registry and ConciergeContext (check_availability and propose_booking always; database tools when DB_LLM_RO_CONNECTION is set)
+    ├── ConciergeTools.cs     Tool registry and ConciergeContext (check_availability and propose_booking always; confirm_booking only when the guest's latest message accepts an open offer; database tools when DB_LLM_RO_CONNECTION is set)
     ├── AvailabilityTool.cs   check_availability (HotelStore's availability search: open rooms, suggested room, exact totals)
-    ├── BookingTool.cs        propose_booking (rechecks a room and shows the guest a Confirm booking card; never books)
-    ├── BookingProposals.cs   Signed 10-minute offers, and booking one when the guest presses Confirm
+    ├── BookingTool.cs        propose_booking (rechecks a room and shows the guest a Confirm booking card; never books) and confirm_booking (books that card after the guest replies yes)
+    ├── BookingProposals.cs   Signed 10-minute offers, the check on a typed yes, and booking an offer once the guest accepts
     ├── KnowledgeTools.cs     get_database_schema and query_database (RAG, read-only views)
     └── KnowledgeQueryValidator.cs   Checks model-written SQL before it runs
 Client/
@@ -120,7 +120,10 @@ Client/
 - **Staff lists must scale with persisted data.** Filter by date or status, or page the results. Don't load every booking ever stored.
 - **Accounts:** `dotnet run --project API -- add-employee` creates a Staff Portal account in whatever database `DB_APP_CONNECTION` points at (needed once per database; after that, use the Employees tab).
 - **One copy of write logic.** Sample-data seeding should reuse `HotelStore`'s insert and rate functions, not keep its own copies.
-- **Schema changes:** update `schema.sql` (fresh installs) and add a numbered `migrate-NNN-*.sql` for existing databases, including the Azure one.
+- **Schema changes:** update `schema.sql` (fresh installs) and add a numbered `migrate-NNN-*.sql` for existing databases, including the Azure one. Write migrations so the currently deployed code still works after they run (new columns nullable, new tables unused by old code), so they can safely go first.
+- **Prices and hotel facts live in the database,** not the code: changing `HotelStore.DefaultRates` or `seed.sql` changes nothing on a running site. Ship a migration for existing databases, and update the concierge's `knowledge_document` text and `hotel-info.json` in the same change.
+- **Running a migration on Azure:** `/opt/homebrew/opt/mysql-client@8.4/bin/mysql -h druid-city-db.mysql.database.azure.com -u <DB_ADMIN_USER> -p --ssl-mode=REQUIRED < API/Database/migrate-NNN-….sql` (admin login from `.env`; your IP must be in the firewall). Check the current values first: staff may have changed rates in the portal.
+- **Testing without touching Azure:** `.env` points at the shared Azure database. To test schema changes, run a throwaway local MySQL, load `schema.sql` and `seed.sql`, create `druid_app` / `druid_llm_ro` with the real grants, and start the API with `DB_APP_CONNECTION` / `DB_LLM_RO_CONNECTION` set in the environment (they override `.env`).
 - **Hotel facts: the database wins.** When `hotel-info.json` or the concierge's knowledge documents disagree with the database (for example `hotel` check-in/out times, `room_type` sizes, occupancy, and rates), treat the database as correct and update the JSON and documents to match. Facts the database doesn't hold (taxes, policies, amenities, address) stay TODO until Mr. Rogers confirms them.
 
 ### Live database on Azure
@@ -168,7 +171,10 @@ Client/
 ### AI Concierge
 
 - Current state: Druid AI Assistant answers hotel and booking questions only (from `hotel-info.json`, or from the database views when `DB_LLM_RO_CONNECTION` is set), checks availability and exact prices with `check_availability` (the same `HotelStore` search as the booking page), knows today's hotel-local date and whether the guest is signed in, is aware of which site section the user is on (main / booking / employee portal), and is restricted to booking-related topics.
-- **Booking end to end:** `propose_booking` rechecks the room and price and emits a `proposal` event (a card with a signed 10-minute token) to the browser; the model never sees the token. Only the guest's Confirm booking press (`POST api/concierge/bookings`, guest session required) books, through `HotelStore.CreateReservationAsync` with `Booker.Concierge`, which locks the room, re-checks it, and refuses a changed total (`BookingConflictException` → 409 with a fresh card). Keep it that way: the model must never be able to book, change, or cancel on its own.
+- **Booking end to end:** `propose_booking` rechecks the room and price and emits a `proposal` event (a card with a signed 10-minute token) to the browser; the model never sees the token. The guest books in one of two ways, both through `BookingProposals.ConfirmAsync` and `HotelStore.CreateReservationAsync` with `Booker.Concierge`, which locks the room, re-checks it, and refuses a changed total (`BookingConflictException` → a fresh card):
+  - **The button:** Confirm booking posts the token to `POST api/concierge/bookings` (guest session required).
+  - **A typed yes:** the browser sends the card's token (`offerToken`) only with the very next message. The model gets `confirm_booking` (no arguments, books that offer unchanged) only when `BookingProposals.Confirmable` passes: a signed-in guest, not the staff page, a live unused token for this account, and `IsAcceptance` on the guest's latest message. Then the model must also read the message as accepting the offer unchanged.
+  - Keep both checks: the model must never be able to book, change, or cancel without the guest's own acceptance, and never sees the token.
 - Signed-out guests get a `sign_in` event (a sign-in button in the chat). Concierge bookings start due at check-in, and the booked card then offers Pay now (`#/pay?id=…`). The AI doesn't ask how to pay before booking, and the browser blocks card numbers from the chat.
 - Tools get a `ConciergeContext` (page, signed-in guest, `Emit` for browser events). Add tools by implementing `IConciergeTool` and registering it in `Program.cs`.
 - Not built: changing or cancelling bookings in the chat, and a real card processor. `payment.online_payment_available` is true because the site's prototype card form (booking page and Pay now) exists.
@@ -198,7 +204,8 @@ The file is one IIFE in `'use strict'` mode, organized into numbered sections. K
 - **Floors and rooms:** 3 floors × 40 rooms = 120 rooms, numbered 101–140, 201–240, 301–340. Room number reflects the floor.
 - **Bed mix:** about 1/3 King, remainder split between Double Queen and Twin, plus 2 large Master Suites (currently rooms 339 and 340, counted within the 120).
 - **Default rates** rise with the room (weeknight / weekend): Twin $90 / $135, King $110 / $160, Double Queen $130 / $185, Master Suite $250 / $325 (`HotelStore.DefaultRates`; each type is edited separately). **Friday and Saturday nights are weekend nights.**
-- **Rates are editable in the Staff Portal** and apply to new searches only. Existing reservations keep the totals they were booked at.
+- **Rates are editable in the Staff Portal** (a weeknight and weekend rate per room type) and apply to new searches only. Existing reservations keep the totals they were booked at. A special date rate still sets one price for every room type that night.
+- **Show prices honestly:** the Rooms page lists each type's weeknight and Fri & Sat rate (not "From"), cheapest room first; search lists types cheapest first too.
 - **Search** returns available rooms plus the total cost for the chosen date range, with filters for **bed type** and **floor**. Fast availability and cost lookup is a top client priority.
 
 ## Staff Portal requirements

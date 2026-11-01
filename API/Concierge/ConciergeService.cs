@@ -76,9 +76,9 @@ public class ConciergeService(ConciergePrompt prompt, ConciergeTools tools)
     public async Task<ConciergeStatus> Run(List<BetaMessageParam> messages, ConciergeContext context,
         Func<string, Task> onText, Func<Task> onReset, CancellationToken cancellationToken)
     {
-        var system = prompt.Build(context.Page, signedIn: context.Guest != null)
+        var system = prompt.Build(context.Page, signedIn: context.Guest != null, openOffer: context.Offer?.Summary)
             .Select(text => new BetaTextBlockParam { Text = text }).ToList();
-        var toolDefinitions = tools.Definitions();
+        var toolDefinitions = tools.Definitions(context);
         var conversation = new List<BetaMessageParam>(messages);
         var shownText = false;  // text already sent in an earlier turn of this reply
 

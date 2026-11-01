@@ -444,16 +444,18 @@
 
         // Druid AI Assistant (POST api/concierge). Streams the reply:
         // onText(delta) appends text, onReset() discards text shown so far, and
-        // onEvent(event) receives the rest: { type: 'proposal', proposal } (a booking card)
-        // or { type: 'sign_in' } (booking needs the guest to sign in first).
+        // onEvent(event) receives the rest: { type: 'proposal', proposal } (a booking card),
+        // { type: 'sign_in' } (booking needs the guest to sign in first), or
+        // { type: 'booked', reservation } (the guest replied yes and the offer is booked).
+        // offerToken is the open card's token, sent only with the first message after it.
         // Resolves when the reply is complete; rejects with a guest-friendly message.
-        async askConcierge(messages, page, onText, onReset, onEvent) {
+        async askConcierge(messages, page, onText, onReset, onEvent, offerToken) {
             let response;
             try {
                 response = await fetch(API_BASE + '/concierge', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ messages, page })
+                    body: JSON.stringify({ messages, page, offerToken })
                 });
             } catch (e) {
                 throw new Error(CONCIERGE_OFFLINE);
@@ -2454,6 +2456,10 @@
         // whether booking needs the guest to sign in first.
         let proposal = null;
         let signIn = false;
+        // A typed yes only counts as the very next message after a card, so this message may
+        // carry the card's token and later ones won't.
+        const replyingTo = takeOfferAwaitingReply();
+        let booked = false;
         try {
             await api.askConcierge(
                 conciergeChat.slice(-CONCIERGE_WINDOW),
@@ -2475,17 +2481,29 @@
                 (event) => {
                     if (event.type === 'proposal' && event.proposal) proposal = event.proposal;
                     else if (event.type === 'sign_in') signIn = true;
-                }
+                    else if (event.type === 'booked' && event.reservation && replyingTo) {
+                        booked = event.reservation;
+                        markOfferBooked(replyingTo, booked, false);
+                    }
+                },
+                replyingTo ? conciergeOffers.get(replyingTo).proposal.token : undefined
             );
-            if (!reply.trim()) throw new Error(CONCIERGE_OFFLINE);
-            conciergeChat.push({ role: 'assistant', content: reply });
+            if (reply.trim()) conciergeChat.push({ role: 'assistant', content: reply });
+            else if (!booked) throw new Error(CONCIERGE_OFFLINE);
         } catch (err) {
-            const message = err.message || CONCIERGE_OFFLINE;
-            if (!bubble) bubble = addConciergeBubble('assistant', '');
-            bubble.textContent = message;
-            bubble.parentNode.classList.add('concierge__msg--error');
+            // Once booked, a failed reply is not the guest's problem: the card shows the booking.
+            if (!booked) {
+                const message = err.message || CONCIERGE_OFFLINE;
+                if (!bubble) bubble = addConciergeBubble('assistant', '');
+                bubble.textContent = message;
+                bubble.parentNode.classList.add('concierge__msg--error');
+            }
         } finally {
             typing.hidden = true;
+            if (booked && !reply.trim()) {
+                if (!bubble) bubble = addConciergeBubble('assistant', '');
+                bubble.textContent = 'You’re booked. Confirmation ' + booked.id + '.';
+            }
             if (bubble) bubble.parentNode.removeAttribute('aria-busy');
             if (proposal) addProposalCard(proposal);
             if (signIn) addSignInCard();
@@ -2495,11 +2513,23 @@
         }
     }
 
-    /* Booking cards. The assistant only proposes; the guest's own press of Confirm
-       booking books the room (POST api/concierge/bookings with the card's token). */
+    /* Booking cards. The assistant proposes; the guest books, by pressing Confirm booking
+       (POST api/concierge/bookings with the card's token) or by replying yes as their very
+       next message (the token goes with it, and the server decides whether it counts). */
 
-    // Open offers: card element -> { proposal, timer }.
+    // Open offers: card element -> { proposal, timer, awaitingReply }.
     const conciergeOffers = new Map();
+
+    // The card the guest's next message is the first reply to, if any. Each card is only
+    // returned once, because any message at all ends its chance of a typed yes.
+    function takeOfferAwaitingReply() {
+        let found = null;
+        conciergeOffers.forEach((offer, card) => {
+            if (offer.awaitingReply) found = card;
+            offer.awaitingReply = false;
+        });
+        return found;
+    }
 
     function addConciergeCard(html) {
         const li = document.createElement('li');
@@ -2523,12 +2553,12 @@
                 (p.requests ? '<div><dt>Requests</dt><dd>' + esc(p.requests) + '</dd></div>' : '') +
                 '<div><dt>Total</dt><dd><strong>' + money(p.total) + '</strong> · ' + esc(nightBreakdown(p.nights)) + '</dd></div>' +
             '</dl>' +
-            '<p class="concierge-card__fine">Before taxes. Pay at check-in, or pay by card once it’s booked. This offer is good for 10 minutes.</p>' +
+            '<p class="concierge-card__fine">Before taxes. Pay at check-in, or pay by card once it’s booked. This offer is good for 10 minutes. Reply yes or press Confirm booking.</p>' +
             '<div class="concierge-card__actions"><button type="button" class="btn" data-confirm-booking>Confirm booking</button></div>' +
             '<p class="concierge-card__status" data-card-status tabindex="-1"></p>');
         const timer = setTimeout(() => closeOffer(card, 'This offer has expired. Ask me again and I’ll recheck the room and price.'),
             (Number(p.expiresInSeconds) || 600) * 1000);
-        conciergeOffers.set(card, { proposal: p, timer });
+        conciergeOffers.set(card, { proposal: p, timer, awaitingReply: true });
     }
 
     // Ends an offer: no more Confirm button, and a note saying why.
@@ -2556,6 +2586,8 @@
         try {
             r = await api.confirmConciergeBooking(offer.proposal.token);
         } catch (err) {
+            // A typed yes booked it while this press was on its way; the card already says so.
+            if (!conciergeOffers.has(card)) return;
             if (err.status === 401) {
                 closeOffer(card, 'Your sign-in has ended. Sign in again, then ask me to set it up again.');
                 addSignInCard();
@@ -2571,19 +2603,26 @@
             return;
         }
 
-        clearTimeout(offer.timer);
+        markOfferBooked(card, r, true);
+    }
+
+    // Shows a card as booked, whether the guest pressed the button or replied yes.
+    function markOfferBooked(card, r, moveFocus) {
+        const offer = conciergeOffers.get(card);
+        if (offer) clearTimeout(offer.timer);
         conciergeOffers.delete(card);
+        const status = $('[data-card-status]', card);
         lastBooking = r;
         const t = ROOM_TYPES[r.type];
         card.classList.add('concierge-card--booked');
         $('.concierge-card__title', card).textContent = 'Booked';
         $('.concierge-card__fine', card).textContent = 'Before taxes. Due at check-in, or pay by card now.';
         // Pay now replaces Confirm booking; it opens the payment page for this stay.
-        button.closest('.concierge-card__actions').innerHTML =
+        $('.concierge-card__actions', card).innerHTML =
             '<a class="btn" href="#/pay?id=' + encodeURIComponent(r.id) + '">Pay now</a>';
         status.innerHTML = 'You’re booked. Confirmation <strong>' + esc(r.id) + '</strong>. ' +
             '<a href="#/confirmation?id=' + encodeURIComponent(r.id) + '">See your confirmation</a> · <a href="#/account">Your stays</a>';
-        status.focus();
+        if (moveFocus) status.focus();
         // Part of the history the assistant sees, so later replies know the booking is made.
         conciergeChat.push({
             role: 'assistant',

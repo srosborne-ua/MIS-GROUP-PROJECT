@@ -39,7 +39,7 @@
 
     "booking": {
         "account_required": "Guests need a hotel account to book: 'Sign in' in the site menu signs in or creates one (name, email, mobile phone, and a password of at least 8 characters). Booked stays are listed under 'Your stays' in the site menu.",
-        "how_to_book": "Two ways. On the booking page ('Book a stay' in the site menu): choose check-in and check-out dates, optionally filter by bed type (king, queen, or twin; the master suites have a king bed) and floor (first, second, or third). The page lists each open room type with the full cost of the stay and a room picked for the guest, who can choose a different one. Or in this chat: the concierge finds a room and price, then shows a card with a Confirm booking button; nothing is booked until the guest presses it.",
+        "how_to_book": "Two ways. On the booking page ('Book a stay' in the site menu): choose check-in and check-out dates, optionally filter by bed type (king, queen, or twin; the master suites have a king bed) and floor (first, second, or third). The page lists each open room type with the full cost of the stay and a room picked for the guest, who can choose a different one. Or in this chat: the concierge finds a room and price, then shows a card with a Confirm booking button; nothing is booked until the guest presses it or replies yes.",
         "concierge_bookings_payment": "Bookings made in the chat are due at check-in, or the guest can press Pay now on the booked card to pay by card online.",
         "concierge_can_book": true,
         "concierge_can_check_availability": true

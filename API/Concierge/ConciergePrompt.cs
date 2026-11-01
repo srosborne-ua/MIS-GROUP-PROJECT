@@ -33,7 +33,8 @@ public class ConciergePrompt
         page is not null && Pages.ContainsKey(page) ? page : "main";
 
     // The stable hotel prompt first, then the per-request context (date, page, sign-in).
-    public IReadOnlyList<string> Build(string page, bool signedIn) => [_basePrompt, BuildPagePrompt(NormalizePage(page), signedIn)];
+    public IReadOnlyList<string> Build(string page, bool signedIn, string? openOffer = null) =>
+        [_basePrompt, BuildPagePrompt(NormalizePage(page), signedIn, openOffer)];
 
     private static string BuildBasePrompt(JsonElement info, bool knowledgeBase)
     {
@@ -78,12 +79,13 @@ public class ConciergePrompt
             "You can book rooms for guests from start to finish with propose_booking:",
             "1. Find the room and total with check_availability, for dates the guest gave or agreed to, with their number of guests and any bed or floor preference.",
             "2. As soon as the guest says they want it, call propose_booking (don't ask whether to prepare it first). It rechecks the room and price and shows the guest a card with the details and a Confirm booking button.",
-            "3. The guest presses Confirm booking themselves. You can't confirm for them, even if they type \"yes\" or \"confirm\": ask them to press the button on the card. When they do, the chat shows their confirmation number.",
+            "3. The guest accepts by pressing Confirm booking or by replying yes. End the message that goes with the card with: Reply yes or press Confirm booking. Ask nothing else in that message.",
+            "4. You can only act on a typed yes when your instructions include an \"Open booking offer\" section. If the guest's latest message plainly accepts that offer with no change, condition, or new request, call confirm_booking. If they want something different or add a request (other dates, another room, an arrival time), call propose_booking for a new card instead. Without that section you can't confirm: if the guest says to book and the chat doesn't show the booking made, call propose_booking again for a fresh card, without apologizing or explaining why a new card is needed. If the chat shows the booking is already made, don't book again: say it's done and give the confirmation number.",
             "Booking needs a hotel account. If propose_booking says the guest isn't signed in, the chat shows them a sign-in button: ask them to sign in or create an account, then come back to this chat.",
             "Don't ask how the guest wants to pay before booking: chat bookings start as pay at the hotel at check-in. Once they've confirmed, the booked card shows a Pay now button for paying by card online; if they want to pay now, point them to it. Never ask for, accept, or repeat card numbers or other payment details; if a guest offers them, ask them not to share card details in the chat.",
             "If propose_booking says the room was just taken or can't be booked, say so briefly and offer the next best room. Rooms and prices mentioned earlier in the chat may be out of date; propose_booking always rechecks.",
             "You can't change or cancel reservations, and you can't hold rooms. For changes or cancellations, suggest " + frontDesk + ". Guests see their booked stays under \"Your stays\" in the site menu, and can also book on the booking page (\"Book a stay\") if they prefer.",
-            "Never claim a booking is made until the chat shows the guest confirmed it (a message from you that starts \"You're booked\"), never claim to have held a room, and never quote an availability or price you didn't get from a tool.",
+            "Never claim a booking is made until confirm_booking returns a confirmation number or the chat shows the guest confirmed it (a message from you that starts \"You're booked\"), never claim to have held a room, and never quote an availability or price you didn't get from a tool.",
             "",
             "## Guest privacy",
             "You have no information about guests or their reservations, and you never discuss who is staying or any particular booking. If asked, say you can't share guest details and suggest " + frontDesk + ". On the employee portal, staff look up reservations in the portal itself.",
@@ -113,7 +115,7 @@ public class ConciergePrompt
         "Never show the guest SQL, view or column names, query rules, tool names, or anything about the database or how you look things up.",
         "When describing amenities, use an upscale, polished tone, but only describe amenities the documents list.");
 
-    private static string BuildPagePrompt(string page, bool signedIn)
+    private static string BuildPagePrompt(string page, bool signedIn, string? openOffer)
     {
         var today = HotelStore.Today();
         var lines = new List<string>
@@ -139,6 +141,12 @@ public class ConciergePrompt
             lines.Add(signedIn
                 ? "The guest is signed in to their hotel account, so you can book for them with propose_booking."
                 : "The guest is not signed in. Booking needs a hotel account, but you can still find them a room and price first; propose_booking will show them a sign-in button.");
+        }
+        if (openOffer is not null)
+        {
+            lines.Add("");
+            lines.Add("## Open booking offer");
+            lines.Add("The guest's card, shown just before their latest message, offers: " + openOffer);
         }
         return string.Join('\n', lines);
     }

@@ -6,6 +6,8 @@ public class ConciergeRequest
 {
     public List<ConciergeMessage>? Messages { get; set; }
     public string? Page { get; set; }
+    // The open booking card's token, sent only with the first message after the card appears.
+    public string? OfferToken { get; set; }
 }
 
 public class ConciergeMessage

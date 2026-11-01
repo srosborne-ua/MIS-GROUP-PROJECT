@@ -12,7 +12,7 @@ The client's measure of success: the site should make life easy, both for guests
 | --- | --- |
 | **Backend API:** an ASP.NET Core Web API in `API/` that owns every pricing, availability, and booking rule | Built; the front end calls it for all data |
 | **Database:** replace the in-memory store with full CRUD for reservations, rooms, holds, event blocks, rates, and guests | Built on MySQL; the API reads and writes it for all data |
-| **AI:** the Druid AI Assistant concierge chat, using Claude through the official Anthropic C# SDK | Built: answers hotel questions, looks up rooms, rates, and counts with its own read-only SQL, checks availability and prices, and books rooms end to end (the guest presses one Confirm booking button) |
+| **AI:** the Druid AI Assistant concierge chat, using Claude through the official Anthropic C# SDK | Built: answers hotel questions, looks up rooms, rates, and counts with its own read-only SQL, checks availability and prices, and books rooms end to end (the guest presses Confirm booking or replies yes) |
 | **Guest accounts:** guests sign in (or create an account) to book, on the booking page or in the chat, and see their stays | Built |
 
 ## Running the site
@@ -198,8 +198,10 @@ The Druid AI Assistant is a chat widget on every page, served by `POST api/conci
 The guest asks for a room in plain words ("a king this Friday for two nights, we'll arrive late"). The concierge finds it with `check_availability` and calls `propose_booking`, which runs on the server:
 
 1. **Propose (the model).** `propose_booking` re-checks that the room is open (`HotelStore.CheckRoomAsync`, no past dates), checks the guest count, prices the stay, and signs that exact offer into a token: account, room, dates, guests, requests, and total, good for 10 minutes (ASP.NET Core Data Protection, so it can't be edited or forged). The browser gets a card with the details and a **Confirm booking** button. The model gets the details but never the token, so it can't book by itself.
-2. **Confirm (the guest).** Pressing the button posts the token to `POST api/concierge/bookings` (guest sign-in required, 10 per 10 minutes per IP). That calls the same `HotelStore.CreateReservationAsync` as the booking page, which locks the room, re-checks it, and refuses if the total has changed since the card was shown. Each offer books once.
-3. **If it changed in between** (someone else booked the room, or staff changed the rate), the guest gets a 409 explaining what happened and a fresh card: the same room at the new price, or the same kind of room, if one is open.
+2. **Confirm (the guest).** The guest does one of two things, and either calls the same `HotelStore.CreateReservationAsync` as the booking page, which locks the room, re-checks it, and refuses if the total has changed since the card was shown. Each offer books once.
+   - **Press the button.** It posts the token to `POST api/concierge/bookings` (guest sign-in required, 10 per 10 minutes per IP).
+   - **Reply yes.** The browser sends the token with the guest's very next message only, so a "yes" to some later question can't book. The model gets the `confirm_booking` tool only if the server agrees that message accepts a live offer for this account: it's short, says yes, and has no question or hesitation (`BookingProposals.IsAcceptance`). The model must then also read it as accepting the offer unchanged; "yes, three nights" gets a new card instead. The tool takes no arguments, so the model can't change the room, dates, or price, and it still never sees the token.
+3. **If it changed in between** (someone else booked the room, or staff changed the rate), the guest is told what happened and gets a fresh card: the same room at the new price, or the same kind of room, if one is open.
 
 The booking is source `concierge` and due at check-in. The AI doesn't ask how they'll pay; once it's booked, the card swaps Confirm booking for **Pay now**, which opens the payment page (card details never go through the chat). The booking the Staff Portal shows it as "Booked … with the concierge" with a note in its message log. A guest who isn't signed in gets a sign-in button in the chat; after signing in they come back to the same page and the conversation picks up. Card numbers typed into the chat are stopped in the browser before they're sent. Only one offer is open at a time, and an offer that expires or is replaced can't be confirmed.
 
@@ -207,14 +209,15 @@ The booking is source `concierge` and due at check-in. The AI doesn't ask how th
 
 When `DB_LLM_RO_CONNECTION` is set, the concierge looks hotel facts up in the database instead of having them pasted into its prompt. **Claude writes the SQL itself, and that exact query runs against MySQL** (after the checks below), so it can answer questions nobody wrote a query for in advance: "how many twin rooms are on each floor?", "which nights is suite 339 taken?", "how many rooms are free tonight?".
 
-The concierge has four tools (`API/Concierge/`):
+The concierge has five tools (`API/Concierge/`):
 
 | Tool | What it does | Who writes the query |
 | --- | --- | --- |
 | `get_database_schema` | Returns the approved views, a one-line description of each, and their columns (names, types, nullability). Called first. | Fixed query in C# |
 | `query_database` | Runs one SELECT against the views and returns up to 50 rows. Used for policies (`LIKE` searches on documents), exact counts, room details, rates, and which rooms are taken on which nights. | **Claude** |
 | `check_availability` | Open rooms, the suggested room, and the exact total for given dates, guests, bed type, and floor. Runs `HotelStore`'s availability search, the same code as the booking page, as `druid_app`. | Fixed query in C#; Claude only fills in the dates and filters |
-| `propose_booking` | Re-checks a room and shows the guest a card to confirm (see [Booking in the chat](#booking-in-the-chat)). Writes nothing; only the guest's button press books. | Fixed code in C#; Claude fills in the room, dates, guests, and requests |
+| `propose_booking` | Re-checks a room and shows the guest a card to confirm (see [Booking in the chat](#booking-in-the-chat)). Writes nothing. | Fixed code in C#; Claude fills in the room, dates, guests, and requests |
+| `confirm_booking` | Books the open card after the guest replies yes. Only offered when the server agrees the guest's latest message accepts a live offer. | Fixed code in C#; no input from Claude |
 
 Availability and prices go through `check_availability` on purpose: weekend nights, special rates, holds, and event blocks are applied by the server's own rules, so the concierge's totals always match the booking page. Claude's own SQL is for everything else.
 
@@ -243,6 +246,8 @@ Text the model writes before calling a tool (a note like "Next Friday is Oct 30"
 | --- | --- |
 | How much is a Saturday night? | The default weekend rate for each room type ($135 to $325; Friday and Saturday are weekend nights); offers to check the exact total for their dates |
 | (Signed in) Book me a king this Friday for 2 nights, 2 guests. We arrive around 10pm. | One room on the highest open floor, $320; a card with the late arrival as a request; Confirm booking books it and shows the confirmation number |
+| (Signed in, right after a card) Yes, that looks great | Booked; the card shows Booked and Pay now, and the reply gives the confirmation number |
+| (Signed in, right after a card) Yes, but make it three nights | Not booked; a new card for the new dates |
 | (Signed out) Book the master suite Dec 8 to 10, it's our anniversary. | Room 339 and $500, plus a sign-in button; after signing in, "yes" brings up the card |
 | Do you have a king room available? (no dates) | Checks tonight for one night, says which dates it used, offers one room, and asks whether to book or check other dates |
 | My card is 4242 4242 4242 4242 | Not sent; the chat asks them not to type card numbers |
@@ -323,7 +328,7 @@ A refused message gets a friendly reply and the rest of the site keeps working. 
 **Backend and AI**
 
 14. **Backend stack:** the backend is C# only: an ASP.NET Core Web API, which also hosts the AI concierge. The database is MySQL, accessed with MySqlConnector and Dapper.
-15. **AI concierge scope:** answers hotel and booking questions only. It answers from the hotel's knowledge base, checks availability and prices itself, and books rooms end to end; the guest's only extra step is pressing Confirm booking. It can't hold, change, or cancel reservations.
+15. **AI concierge scope:** answers hotel and booking questions only. It answers from the hotel's knowledge base, checks availability and prices itself, and books rooms end to end; the guest's only extra step is pressing Confirm booking or replying yes. It can't hold, change, or cancel reservations.
 16. **Concierge and online payment:** `payment.online_payment_available` is true, so the concierge tells guests they can pay by card on the site (booking page or Pay now) or at check-in. Card checks are still browser-only (prototype).
 17. **Concierge welcome card:** it shows on first visit and tucks into a small "Ask the concierge" button when the visitor scrolls or uses the page, so it never covers content. If a guest minimizes it, it stays minimized for the browser session.
 18. **Hosting:** the site is hosted on Azure App Service (Linux, North Central US) as one app that serves both the site and the API.
@@ -357,7 +362,7 @@ A refused message gets a friendly reply and the rest of the site keeps working. 
 34. **Guests need an account to book**, on the booking page and in the chat. Staff still book for anyone from the portal. Accounts take a name, email, mobile phone, and a password of at least 8 characters (staff passwords stay at 12).
 35. **Emails aren't verified:** without email sending, a guest account shows only the bookings made from it, never others with the same email. A guest who forgets their password can't reset it yet; the front desk can still book for them.
 36. **Bookings use the account's email.** The name and phone on the booking form start from the account and can be changed per booking.
-37. **The chat books only after the guest presses Confirm booking.** Typing "yes" is not enough. Offers last 10 minutes, one is open at a time, and each books at most once. If the room is taken or repriced first, the guest is offered the same room at the new price or the same kind of room.
+37. **The chat books only after the guest accepts the card,** by pressing Confirm booking or replying yes as their very next message. After any other message, a typed yes gets a fresh card first. A reply with a question, a hesitation, or a change never books. Offers last 10 minutes, one is open at a time, and each books at most once. If the room is taken or repriced first, the guest is offered the same room at the new price or the same kind of room.
 38. **Chat bookings default to paying at the hotel.** The AI doesn't ask how to pay before booking; after booking, the card offers Pay now. The chat never takes card details (the browser blocks card numbers from being sent).
 39. **Dates in the chat:** asked about rooms or prices without dates, the concierge checks a likely stay within the next week (tonight, or the coming weekend) and says which dates it used. It books only dates the guest gave or agreed to.
 40. **Which room:** the site and the concierge offer one room per type, on the highest open floor (then the lowest number). Guests can pick a different one on the booking page or ask for one in the chat.
