@@ -1052,13 +1052,15 @@
         const body = $('#confirmation-body');
         const id = route.params.get('id') || '';
         let r = lastBooking && lastBooking.id === id ? lastBooking : null;
-        // Reloaded or opened from a link: a signed-in guest can load their own reservation.
-        if (!r && id && await ensureGuest()) {
-            body.innerHTML = '<p class="status-line" role="status">Loading your reservation…</p>';
+        // A signed-in guest always gets the current copy from the server, so a stay paid on
+        // Stripe's page (or in another tab) never shows the old unpaid copy or a Pay now button.
+        if (id && await ensureGuest()) {
+            if (!r) body.innerHTML = '<p class="status-line" role="status">Loading your reservation…</p>';
             try {
                 r = await api.getMyReservation(id);
+                lastBooking = r;
             } catch (err) {
-                r = null;
+                // Keep the copy from the booking just made, if there is one.
             }
         }
         if (!r) {
