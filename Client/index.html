@@ -398,6 +398,7 @@
                     </div>
                     <div class="form-actions">
                         <button type="submit" class="btn">Sign in</button>
+                        <a class="btn-text" href="#/reset">Forgot your password?</a>
                     </div>
                     <p id="gs-message" class="notice" role="alert" hidden></p>
                 </form>
@@ -443,6 +444,46 @@
                 <h2 class="label-heading section-gap">Past and cancelled</h2>
                 <div id="account-past"></div>
                 <p class="fine-print section-gap">To change or cancel a stay, call the front desk.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="view" data-view="reset" aria-labelledby="reset-title" hidden>
+        <div class="container page-head">
+            <p class="eyebrow">Your account</p>
+            <h1 id="reset-title" class="display" tabindex="-1">Reset your password.</h1>
+            <p id="reset-lede" class="lede measure"></p>
+        </div>
+
+        <div class="container">
+            <div class="account-forms">
+                <form id="reset-request-form" class="staff-form" novalidate aria-labelledby="reset-title" hidden>
+                    <div class="field">
+                        <label for="rr-email">Email</label>
+                        <input type="email" id="rr-email" name="email" autocomplete="username" required>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn">Email me a link</button>
+                        <a class="btn-text" href="#/account">Back to sign in</a>
+                    </div>
+                    <p id="rr-message" class="notice" role="status" hidden></p>
+                </form>
+
+                <form id="reset-set-form" class="staff-form" novalidate aria-labelledby="reset-title" hidden>
+                    <div class="field">
+                        <label for="rs-password">New password</label>
+                        <input type="password" id="rs-password" name="password" autocomplete="new-password" required aria-describedby="rs-password-hint">
+                        <p id="rs-password-hint" class="hint">At least 8 characters.</p>
+                    </div>
+                    <div class="field">
+                        <label for="rs-confirm">Confirm new password</label>
+                        <input type="password" id="rs-confirm" name="confirm" autocomplete="new-password" required>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn">Save new password</button>
+                    </div>
+                    <p id="rs-message" class="notice" role="alert" hidden></p>
+                </form>
             </div>
         </div>
     </section>

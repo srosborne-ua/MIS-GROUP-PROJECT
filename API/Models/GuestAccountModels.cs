@@ -26,3 +26,16 @@ public class PayReservationRequest
 {
     public bool CardOnFile { get; set; }
 }
+
+// POST api/account/forgot-password
+public class ForgotPasswordRequest
+{
+    public string? Email { get; set; }
+}
+
+// POST api/account/reset-password
+public class ResetPasswordRequest
+{
+    public string? Token { get; set; }
+    public string? Password { get; set; }
+}

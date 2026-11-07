@@ -38,6 +38,8 @@ builder.Services.AddControllers(options =>
         options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull);
 // MySQL as druid_app; the connection string is DB_APP_CONNECTION from .env.
 builder.Services.AddSingleton<Db>();
+builder.Services.AddSingleton<EmailSender>();
+builder.Services.AddSingleton<StripePayments>();
 builder.Services.AddSingleton<HotelStore>();
 builder.Services.AddSingleton<EmployeeStore>();
 builder.Services.AddSingleton<ShiftStore>();

@@ -350,6 +350,7 @@ input[type="email"],
 input[type="password"],
 input[type="tel"],
 input[type="date"],
+input[type="time"],
 input[type="number"],
 input[type="search"],
 select,
@@ -722,6 +723,67 @@ input[type="checkbox"] {
 .result__choose summary:hover { color: var(--accent); }
 
 .result__choose[open] summary { margin-bottom: 0.75rem; }
+
+/* Room chips: a compact picker, one row of room numbers per floor. */
+.room-chips {
+    border: 0;
+    margin: 0 0 0.75rem;
+    padding: 0;
+    min-width: 0;
+}
+
+.room-chips legend {
+    padding: 0;
+    margin-bottom: 0.4rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+}
+
+.room-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.room-chips legend { flex: 0 0 100%; }
+
+.room-chip { position: relative; }
+
+.room-chip input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.room-chip span {
+    display: block;
+    min-width: 2.75rem;
+    padding: 0.5rem 0.4rem;
+    text-align: center;
+    font-size: 0.875rem;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: #fffdf9;
+}
+
+.room-chip input:hover + span { border-color: var(--ink); }
+
+.room-chip input:checked + span {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper);
+}
+
+.room-chip input:focus-visible + span {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
 
 @media (min-width: 56rem) {
     .result { grid-template-columns: 1.6fr 1fr 14rem; gap: 3rem; align-items: start; }

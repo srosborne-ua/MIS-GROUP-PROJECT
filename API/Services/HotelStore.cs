@@ -42,7 +42,7 @@ public record Booker(string Source, int? GuestAccountId, decimal? QuotedTotal = 
 // runs in a READ COMMITTED transaction that locks the room rows first
 // (SELECT ... FOR UPDATE), then re-checks for overlaps, then inserts. A second
 // writer for the same room waits on the lock and then sees the first one's row.
-public class HotelStore(Db db)
+public class HotelStore(Db db, EmailSender email)
 {
     private const decimal MaxRate = 999999.99m;   // DECIMAL(8,2)
     private const string ReservationPrefix = "DC-";
@@ -391,6 +391,8 @@ public class HotelStore(Db db)
     // records paid (method "online"). Paying twice, or for a cancelled or past stay, is refused.
     public async Task<Reservation> PayAccountReservationAsync(int accountId, string id, bool cardOnFile)
     {
+        // With Stripe on, only a payment Stripe confirms may mark a stay paid.
+        if (StripePayments.IsConfigured) throw new HotelRuleException("Please use the secure checkout to pay for your stay.");
         var notFound = new HotelRuleException("We couldn’t find reservation " + id + " on your account.", notFound: true);
         var bookingId = ParseId(ReservationPrefix, id) ?? throw notFound;
         await using var conn = await db.OpenAsync();
@@ -456,7 +458,8 @@ public class HotelStore(Db db)
             throw new BookingConflictException("The price for those dates has changed from " + Money(quoted) + " to " + Money(quote.Total) + ".");
         var now = DateTime.UtcNow;
         // Concierge bookings are paid at the hotel: the chat never takes payment.
-        var paid = input.PaymentStatus == "paid" && booker.Source != "concierge";
+        // With Stripe on, a guest's booking starts unpaid and Stripe's confirmation marks it paid.
+        var paid = input.PaymentStatus == "paid" && booker.Source != "concierge" && (booker.IsStaff || !StripePayments.IsConfigured);
         var reminder = checkin.AddDays(-2) > Today() ? checkin.AddDays(-2) : Today();
 
         // One guest per email. An existing guest row is reused but never rewritten, so a
@@ -514,12 +517,53 @@ public class HotelStore(Db db)
         if (booker.Source == "concierge")
             await AddMessageAsync(conn, tx, bookingId, "concierge",
                 "Booked through Druid AI Assistant: the guest confirmed the room, dates, and " + Money(quote.Total) + " total in the chat. Payment due at check-in.", now);
-        await AddMessageAsync(conn, tx, bookingId, "system", "Confirmation emailed to " + guest.Email + ".", now);
         await AddMessageAsync(conn, tx, bookingId, "system",
             "Pre-arrival note (parking, directions, check-in time) scheduled for " + FormatDate(reminder) + ".", now);
 
         await tx.CommitAsync();
+        // After the commit, so a slow or failed send can never fail the booking.
+        var created = (await LoadReservationAsync(conn, bookingId))!;
+        await SendNoticeAsync(conn, bookingId, guest.Email, GuestEmails.Confirmation(created), "Confirmation");
         return (await LoadReservationAsync(conn, bookingId))!;
+    }
+
+    // Records a payment that Stripe confirmed. Called by the webhook and by the guest's return
+    // from Stripe, so it is safe to run twice: the second call changes nothing.
+    public async Task<Reservation> MarkPaidOnlineAsync(string id, long amountCents)
+    {
+        var notFound = new HotelRuleException("We couldn’t find reservation " + id + ".", notFound: true);
+        var bookingId = ParseId(ReservationPrefix, id) ?? throw notFound;
+        await using var conn = await db.OpenAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        var row = await conn.QuerySingleOrDefaultAsync<(decimal Total, string Status)>(
+            """
+            SELECT b.total AS Total, COALESCE(p.status, 'unpaid') AS Status
+            FROM booking b LEFT JOIN payment p ON p.booking_id = b.id
+            WHERE b.id = @Id FOR UPDATE
+            """, new { Id = bookingId }, tx);
+        if (row.Status == null) throw notFound;
+        if (row.Status != "paid")
+        {
+            if (StripePayments.Cents(row.Total) != amountCents)
+                throw new HotelRuleException("The amount paid doesn’t match the reservation total.");
+            var now = DateTime.UtcNow;
+            await conn.ExecuteAsync(
+                "UPDATE payment SET status = 'paid', method = 'online', paid_at = @Now, updated_at = @Now WHERE booking_id = @Id AND status = 'unpaid'",
+                new { Id = bookingId, Now = now }, tx);
+            await AddMessageAsync(conn, tx, bookingId, "system", "Paid online through Stripe.", now);
+        }
+        await tx.CommitAsync();
+        return (await LoadReservationAsync(conn, bookingId))!;
+    }
+
+    // Emails the guest and records what really happened in the reservation's message log.
+    private async Task SendNoticeAsync(MySqlConnection conn, int bookingId, string to,
+        (string Subject, string Text, string Html) mail, string what)
+    {
+        var sent = await email.SendAsync(to, mail.Subject, mail.Text, mail.Html);
+        await AddMessageAsync(conn, null, bookingId, "system", sent
+            ? what + " emailed to " + to + "."
+            : what + " email not sent (email isn’t set up, or the mail server refused it).", DateTime.UtcNow);
     }
 
     public async Task<Reservation> CancelReservationAsync(string id)
@@ -534,8 +578,10 @@ public class HotelStore(Db db)
             "UPDATE booking SET status = 'cancelled', cancelled_at = @Now WHERE id = @Id AND status = 'confirmed'",
             new { booking.Id, Now = now }, tx);
         if (changed == 0) throw alreadyCancelled;
-        await AddMessageAsync(conn, tx, booking.Id, "system", "Reservation cancelled. Cancellation notice emailed to guest.", now);
+        await AddMessageAsync(conn, tx, booking.Id, "system", "Reservation cancelled.", now);
         await tx.CommitAsync();
+        var cancelled = (await LoadReservationAsync(conn, booking.Id))!;
+        await SendNoticeAsync(conn, booking.Id, cancelled.Guest.Email, GuestEmails.Cancellation(cancelled), "Cancellation notice");
         return (await LoadReservationAsync(conn, booking.Id))!;
     }
 
@@ -869,7 +915,7 @@ public class HotelStore(Db db)
             new { Id = bookingId }, tx) ?? throw notFound;
     }
 
-    private static Task AddMessageAsync(MySqlConnection conn, MySqlTransaction tx, int bookingId, string sender, string body, DateTime at) =>
+    private static Task AddMessageAsync(MySqlConnection conn, MySqlTransaction? tx, int bookingId, string sender, string body, DateTime at) =>
         conn.ExecuteAsync(
             "INSERT INTO booking_message (booking_id, sender, body, created_at) VALUES (@BookingId, @Sender, @Body, @At)",
             new { BookingId = bookingId, Sender = sender, Body = body, At = at }, tx);

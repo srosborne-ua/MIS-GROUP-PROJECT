@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using API.Database;
 using API.Models;
@@ -81,6 +83,55 @@ public class GuestAccountStore(Db db)
         await using var conn = await db.OpenAsync();
         var row = await conn.QuerySingleOrDefaultAsync<AccountRow>(AccountSelect + " WHERE id = @Id", new { Id = id });
         return row != null && EmployeeStore.Stamp(row.PasswordHash) == stamp ? ToAccount(row) : null;
+    }
+
+    public const int ResetMinutes = 45;
+
+    private static string HashToken(string token) =>
+        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+
+    // Starts a reset. Returns the guest's first name and a fresh one-time token, or null when
+    // there's no such account (or one was just sent). The caller answers the same either way,
+    // so the response never reveals which emails have accounts.
+    public async Task<(string FirstName, string Token)?> StartResetAsync(string? emailInput)
+    {
+        var email = (emailInput ?? "").Trim();
+        if (!EmailPattern.IsMatch(email) || email.Length > 254) return null;
+        await using var conn = await db.OpenAsync();
+        var row = await conn.QuerySingleOrDefaultAsync<AccountRow>(AccountSelect + " WHERE email = @Email", new { Email = email });
+        if (row == null) return null;
+        var now = DateTime.UtcNow;
+        // At most one email a minute per account, so nobody can use us to flood an inbox.
+        var recent = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM guest_password_reset WHERE guest_account_id = @Id AND created_at > @Since",
+            new { row.Id, Since = now.AddMinutes(-1) });
+        if (recent > 0) return null;
+        await conn.ExecuteAsync("DELETE FROM guest_password_reset WHERE guest_account_id = @Id AND expires_at < @Now", new { row.Id, Now = now });
+        var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
+        await conn.ExecuteAsync(
+            "INSERT INTO guest_password_reset (guest_account_id, token_hash, expires_at, created_at) VALUES (@Id, @Hash, @Expires, @Now)",
+            new { row.Id, Hash = HashToken(token), Expires = now.AddMinutes(ResetMinutes), Now = now });
+        return (row.FirstName, token);
+    }
+
+    // Sets a new password from a reset link. The link works once; every other open link for
+    // the account dies with it, and the password change ends any signed-in sessions.
+    public async Task ResetPasswordAsync(string? token, string? newPassword)
+    {
+        var bad = new HotelRuleException("That reset link has expired or was already used. Ask for a new one.");
+        var password = CheckPassword(newPassword);
+        if (string.IsNullOrEmpty(token) || token.Length > 128) throw bad;
+        await using var conn = await db.OpenAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        var accountId = await conn.ExecuteScalarAsync<int?>(
+            "SELECT guest_account_id FROM guest_password_reset WHERE token_hash = @Hash AND expires_at > @Now FOR UPDATE",
+            new { Hash = HashToken(token), Now = DateTime.UtcNow }, tx) ?? throw bad;
+        var changed = await conn.ExecuteAsync(
+            "UPDATE guest_account SET password_hash = @Hash, updated_at = @Now WHERE id = @Id",
+            new { Hash = PasswordHasher.Hash(password), Now = DateTime.UtcNow, Id = accountId }, tx);
+        if (changed == 0) throw bad;
+        await conn.ExecuteAsync("DELETE FROM guest_password_reset WHERE guest_account_id = @Id", new { Id = accountId }, tx);
+        await tx.CommitAsync();
     }
 
     private static string CheckPassword(string? password)

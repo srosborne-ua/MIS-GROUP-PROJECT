@@ -100,6 +100,20 @@ CREATE TABLE guest_account (
     UNIQUE KEY uq_guest_account_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- One-time "forgot password" links for guest accounts. Only the SHA-256 of the token is
+-- stored; a row is deleted when used. No v_* view exposes this table.
+CREATE TABLE guest_password_reset (
+    id                INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    guest_account_id  INT UNSIGNED NOT NULL,
+    token_hash        CHAR(64)     NOT NULL,
+    expires_at        DATETIME     NOT NULL,
+    created_at        DATETIME     NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_guest_password_reset_token (token_hash),
+    KEY ix_guest_password_reset_account (guest_account_id, created_at),
+    CONSTRAINT fk_guest_password_reset_account FOREIGN KEY (guest_account_id) REFERENCES guest_account (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 -- The API shows booking ids as 'DC-' + id.
 CREATE TABLE booking (
     id                INT UNSIGNED NOT NULL AUTO_INCREMENT,

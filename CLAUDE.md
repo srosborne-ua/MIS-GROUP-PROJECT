@@ -18,7 +18,7 @@ The long-term project is an "AI Concierge for Hospitality Bookings".
 
 **Also live:** RAG for the concierge (knowledge documents searched with model-written, validated read-only SQL as `druid_llm_ro`), plus room, room-type, rate, and room-unavailability views (no guest data), and availability and exact prices through `HotelStore`. Mr. Rogers has signed off on these.
 
-**Added after that:** guest accounts (guests sign in to book), and end-to-end booking in the concierge chat, confirmed with one Confirm booking button or by replying yes (Mr. Rogers stressed real function calling that books a room). `migrate-006` and `migrate-007` (per-room-type rates) have been run on Azure; any other database needs them before this code deploys.
+**Added after that:** guest accounts (guests sign in to book), and end-to-end booking in the concierge chat, confirmed with one Confirm booking button or by replying yes (Mr. Rogers stressed real function calling that books a room). `migrate-006` and `migrate-007` (per-room-type rates) have been run on Azure; any other database needs them before this code deploys. **`migrate-009` (guest password reset table) must be run on Azure before this code deploys.**
 
 Success definition from the client: the site should make life easy, both for guests booking and for staff managing.
 
@@ -55,6 +55,8 @@ API/                          ASP.NET Core Web API (.NET 10, controllers); also 
 ├── Services/EmployeeStore.cs Staff accounts, roles, and sign-in rules
 ├── Services/GuestAccountStore.cs   Guest accounts and sign-in rules
 ├── Services/GuestSession.cs  Guest sign-in cookie (its own scheme, never the default)
+├── Services/EmailSender.cs   SMTP sending from env vars (no-op when unset); GuestEmails.cs has the message text
+├── Services/StripePayments.cs   Stripe Checkout sessions (on only when STRIPE_SECRET_KEY is set); PaymentsController has the endpoints and webhook
 ├── Services/ShiftStore.cs    Staff shift schedule rules
 ├── Services/StaffSession.cs  Sign-in cookie setup and the per-minute session re-check
 ├── Services/PasswordHasher.cs   PBKDF2-SHA256 password hashes
@@ -99,7 +101,7 @@ Client/
 - **The server owns the rules.** Pricing, availability, and booking validation live in `HotelStore`; the client may pre-validate for fast feedback but never decides prices or availability. API errors are `{ "message": "..." }` in the site's voice, shown to the user as-is.
 - **The client never talks to Anthropic or the database directly.** The browser calls our backend; only the backend uses the API key and the database.
 - **Secrets live in `.env` only.** Read `ANTHROPIC_API_KEY` and `DB_APP_CONNECTION` from the environment. Never hard-code keys, never put them in `Client/`, never log them, and never commit `.env`.
-- **Payment form is UI only.** Validate in the browser, then discard. Never store, log, or transmit card numbers, expiry, or CVC. A reservation records only paid/not-paid status and whether the guest opted into card-on-file. Card-on-file is an optional checkbox.
+- **Payment form is UI only, unless Stripe is on.** With `STRIPE_SECRET_KEY` set, payment happens on Stripe's hosted Checkout page and card details never reach our browser code, server, or database. Without it, the prototype form validates in the browser, then discards. Never store, log, or transmit card numbers, expiry, or CVC. A reservation records only paid/not-paid status and whether the guest opted into card-on-file. Card-on-file is an optional checkbox.
 - **Scope changes go through Mr. Rogers.** Do not add significant features beyond the spec without the user confirming; flag ideas instead.
 
 ## Backend, database, and AI
@@ -166,7 +168,7 @@ Client/
 - **Validate on the server:** every date range (including the single-room check), holds and blocks (at most 366 nights, not in the past, within about three years ahead), payment status values, and cancelled-reservation edits. Deletes of holds, blocks, and special rates must report "not found" when 0 rows change.
 - **Concierge spend limits** (keep them when changing the concierge): 6 messages/min and 60/hour per IP, 2 replies in progress per IP, and a site-wide daily cap of 1,500 (`CONCIERGE_DAILY_LIMIT`), all in memory (`ConciergeLimits`, so keep one instance). History is capped at 6 messages and a reply at 6 tool turns; the last turn runs with tools turned off so the model must answer. Don't raise these without considering cost, and keep the Anthropic workspace spend limit in place.
 - **Confirm booking presses** (`POST api/concierge/bookings`): 10 per 10 minutes per IP. Guest sign-in and new accounts: 10 per 15 minutes per IP (`guest-sign-in`, separate from staff `sign-in`).
-- **Known gaps:** sequential reservation IDs (only staff or the booking's own guest account can look one up), guest emails aren't verified, no "forgot password" email for guests or staff (a manager resets staff passwords), no rate limit on `POST api/reservations` itself, no CSP or clickjacking headers.
+- **Known gaps:** sequential reservation IDs (only staff or the booking's own guest account can look one up), guest emails aren't verified, guests have an emailed "forgot password" link (needs `SMTP_*` set) but staff don't (a manager resets staff passwords), no rate limit on `POST api/reservations` itself, no CSP or clickjacking headers.
 
 ### AI Concierge
 

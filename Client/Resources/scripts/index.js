@@ -139,6 +139,8 @@
 
     // Loaded from the API at startup (see init). Keyed by type: king, queen, twin, suite.
     let ROOM_TYPES = {};
+    // True when the server has real online payment (Stripe) turned on; otherwise the prototype card form shows.
+    let onlinePayment = false;
 
     // Stand-in photography (README assumption 13). The Twin borrows the two-bed queen photo.
     const ROOM_PHOTOS = {
@@ -426,12 +428,32 @@
 
         signOutGuest() { return request('/account/sign-out', { method: 'POST' }); },
 
+        // "Forgot password": the server emails a one-time link, then the link's token sets a new password.
+        forgotPassword(email) {
+            return request('/account/forgot-password', { method: 'POST', body: { email: String(email) } });
+        },
+
+        resetPassword(token, password) {
+            return request('/account/reset-password', { method: 'POST', body: { token: String(token), password: String(password) } });
+        },
+
         // The signed-in guest's own reservations (latest arrival first), and one of them in full.
         getMyReservations() { return request('/account/reservations'); },
         getMyReservation(resId) { return request('/account/reservations/' + seg(resId)); },
 
         // Pay for one of the guest's own upcoming stays. Card details are validated in the
         // browser and discarded; the API only receives the card-on-file opt-in.
+        // Real online payment (Stripe's hosted Checkout page; our server never sees a card).
+        getPaymentConfig() { return request('/payments/config'); },
+
+        // Resolves to { url }: where to send the guest to pay.
+        startCheckout(resId) { return request('/account/reservations/' + seg(resId) + '/checkout', { method: 'POST' }); },
+
+        // The guest is back from Stripe; the server asks Stripe whether the session was paid.
+        confirmCheckout(resId, sessionId) {
+            return request('/account/reservations/' + seg(resId) + '/checkout/confirm', { method: 'POST', body: { sessionId: String(sessionId) } });
+        },
+
         payReservation(resId, cardOnFile) {
             return request('/account/reservations/' + seg(resId) + '/pay', { method: 'POST', body: { cardOnFile: !!cardOnFile } });
         },
@@ -614,6 +636,7 @@
         rooms: 'Rooms & Amenities · Druid City Hotel',
         account: 'Your stays · Druid City Hotel',
         pay: 'Payment · Druid City Hotel',
+        reset: 'Reset password · Druid City Hotel',
         staff: 'Staff Portal · Druid City Hotel'
     };
 
@@ -625,6 +648,7 @@
         rooms: renderRooms,
         account: renderAccount,
         pay: renderPay,
+        reset: renderReset,
         staff: renderStaff
     };
 
@@ -783,8 +807,7 @@
             // Choosing a different room updates the room named above the Reserve button.
             $('#search-results').addEventListener('change', (e) => {
                 if (e.target.name !== 'room') return;
-                const option = e.target.selectedOptions[0];
-                $('[data-room-pick]', e.target.form).textContent = option.textContent;
+                $('[data-room-pick]', e.target.form).textContent = e.target.dataset.label;
             });
             form.dataset.ready = 'true';
         }
@@ -838,10 +861,14 @@
         results.innerHTML = groups.map((g) => {
             const t = ROOM_TYPES[g.type];
             const floors = Array.from(new Set(g.rooms.map((r) => r.floor)));
-            const options = g.rooms.map((r) =>
-                '<option value="' + r.number + '"' + (r.number === g.suggested.number ? ' selected' : '') + '>' +
-                esc(roomLabel(r)) + '</option>').join('');
-            const fid = 'pick-' + g.type;
+            // Rooms to choose from, grouped by floor as small number chips.
+            const pickerFloors = Array.from(new Set(g.rooms.map((r) => r.floor))).sort((a, b) => b - a);
+            const chips = pickerFloors.map((f) =>
+                '<fieldset class="room-chips"><legend>' + esc(FLOOR_NAMES[f]) + '</legend>' +
+                g.rooms.filter((r) => r.floor === f).map((r) =>
+                    '<label class="room-chip"><input type="radio" name="room" value="' + r.number + '" data-label="' + esc(roomLabel(r)) + '"' +
+                    (r.number === g.suggested.number ? ' checked' : '') + '><span>' + r.number + '</span></label>').join('') +
+                '</fieldset>').join('');
             return '<article class="result">' +
                 '<div class="result__info">' +
                     '<h2 class="result__name">' + esc(t.name) + '</h2>' +
@@ -860,10 +887,7 @@
                         '<span data-room-pick>' + esc(roomLabel(g.suggested)) + '</span></p>' +
                     (g.rooms.length > 1
                         ? '<details class="result__choose"><summary>Choose a different room</summary>' +
-                            '<div class="field">' +
-                                '<label for="' + fid + '">Room</label>' +
-                                '<select id="' + fid + '" name="room">' + options + '</select>' +
-                            '</div>' +
+                            chips +
                           '</details>'
                         : '<input type="hidden" name="room" value="' + g.suggested.number + '">') +
                     '<button type="submit" class="btn">Reserve</button>' +
@@ -885,10 +909,11 @@
 
         const syncPayment = () => {
             const payNow = form.payWhen.value === 'now';
-            cardFields.hidden = !payNow;
-            $$('input', cardFields).forEach((input) => { input.disabled = !payNow; });
-            if (!payNow) $$('input', cardFields).forEach((input) => setFieldError(input, ''));
-            $('#booking-submit').textContent = payNow ? 'Pay & confirm' : 'Confirm reservation';
+            const showCard = payNow && !onlinePayment;
+            cardFields.hidden = !showCard;
+            $$('input', cardFields).forEach((input) => { input.disabled = !showCard; });
+            if (!showCard) $$('input', cardFields).forEach((input) => setFieldError(input, ''));
+            $('#booking-submit').textContent = payNow ? (onlinePayment ? 'Continue to payment' : 'Pay & confirm') : 'Confirm reservation';
         };
         $$('input[name="payWhen"]', form).forEach((r) => r.addEventListener('change', syncPayment));
         syncPayment();
@@ -906,7 +931,7 @@
                 [form.email, isEmail],
                 [form.phone, isPhone]
             ];
-            if (payNow) rules.push(...cardRules(form));
+            if (payNow && !onlinePayment) rules.push(...cardRules(form));
             if (!validate(rules)) return;
 
             const button = $('#booking-submit');
@@ -925,14 +950,15 @@
                         requests: form.requests.value
                     },
                     // Card fields are validated above and then discarded.
-                    paymentStatus: payNow ? 'paid' : 'unpaid',
-                    cardOnFile: payNow && form.cardOnFile.checked,
+                    // With real payment on, the stay starts unpaid and Stripe's page takes the card next.
+                    paymentStatus: payNow && !onlinePayment ? 'paid' : 'unpaid',
+                    cardOnFile: payNow && !onlinePayment && form.cardOnFile.checked,
                     source: 'web'
                 });
                 form.reset();
                 syncPayment();
                 lastBooking = reservation;
-                go('confirmation', { id: reservation.id }, true);
+                go(payNow && onlinePayment ? 'pay' : 'confirmation', { id: reservation.id }, true);
             } catch (err) {
                 // The guest session ended: show the sign-in prompt in place of the form.
                 if (err.status === 401) { router(); return; }
@@ -1089,11 +1115,17 @@
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             if (!payingFor) return;
-            if (!validate(cardRules(form))) return;
+            if (!onlinePayment && !validate(cardRules(form))) return;
             const button = $('#pay-submit');
             const notice = $('#pay-notice');
             button.disabled = true;
             try {
+                if (onlinePayment) {
+                    // Off to Stripe's page; the button stays disabled until the browser leaves.
+                    const { url } = await api.startCheckout(payingFor.id);
+                    window.location.assign(url);
+                    return;
+                }
                 // Card fields are validated above and then discarded.
                 const reservation = await api.payReservation(payingFor.id, form.cardOnFile.checked);
                 form.reset();
@@ -1148,10 +1180,27 @@
             return null;
         }
 
+        // Back from Stripe's page: ask the server whether it was paid.
+        const sessionId = route.params.get('session');
+        if (sessionId) {
+            showNotice(notice, 'Confirming your payment…');
+            try {
+                lastBooking = await api.confirmCheckout(r.id, sessionId);
+                go('confirmation', { id: r.id }, true);
+                return null;
+            } catch (err) {
+                if (err.status === 401) return renderPay(route);
+                showNotice(notice, err.message);
+            }
+        }
+
         payingFor = r;
         layout.hidden = false;
+        $('.fieldset', form).hidden = onlinePayment;
+        $$('input', form).forEach((input) => { input.disabled = onlinePayment; });
+        $('#pay-submit').disabled = false;
         const t = ROOM_TYPES[r.type];
-        $('#pay-submit').textContent = 'Pay ' + money(r.total);
+        $('#pay-submit').textContent = (onlinePayment ? 'Pay securely ' : 'Pay ') + money(r.total);
         $('#pay-back').href = '#/confirmation?id=' + encodeURIComponent(r.id);
         $('#pay-summary').innerHTML =
             '<p class="summary__room">' + esc(t ? t.name : r.type) + '</p>' +
@@ -1278,6 +1327,64 @@
             ? stayList(upcoming)
             : '<p class="hint">Nothing booked yet. <a href="#/search">Find a room</a>, or ask our concierge to book one for you.</p>';
         $('#account-past').innerHTML = past.length ? stayList(past) : '<p class="hint">None yet.</p>';
+        return null;
+    }
+
+    // Forgot password. With no token in the link: ask for an email. With one: set a new password.
+    function renderReset(route) {
+        const view = $('[data-view="reset"]');
+        const rf = $('#reset-request-form');
+        const sf = $('#reset-set-form');
+        if (!view.dataset.ready) {
+            view.dataset.ready = 'true';
+            rf.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const message = $('#rr-message');
+                showNotice(message, '');
+                if (!validate([[rf.email, isEmail]])) return;
+                const button = $('button[type="submit"]', rf);
+                button.disabled = true;
+                try {
+                    const res = await api.forgotPassword(rf.email.value.trim());
+                    showNotice(message, res.message);
+                    rf.email.value = '';
+                } catch (err) {
+                    showNotice(message, err.message);
+                } finally {
+                    button.disabled = false;
+                }
+            });
+            sf.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const message = $('#rs-message');
+                showNotice(message, '');
+                const ok = validate([
+                    [sf.password, (v) => (v.length >= 8 ? '' : 'Use a password of at least 8 characters.')],
+                    [sf.confirm, (v) => (v === sf.password.value.trim() ? '' : 'The two passwords don’t match.')]
+                ]);
+                if (!ok) return;
+                const button = $('button[type="submit"]', sf);
+                button.disabled = true;
+                try {
+                    await api.resetPassword(sf.dataset.token, sf.password.value);
+                } catch (err) {
+                    showNotice(message, err.message);
+                    return;
+                } finally {
+                    button.disabled = false;
+                }
+                sf.reset();
+                go('account', null, true);
+                showNotice($('#gs-message'), 'Your password is changed. Sign in with the new one.');
+            });
+        }
+        const token = route.params.get('token');
+        rf.hidden = !!token;
+        sf.hidden = !token;
+        sf.dataset.token = token || '';
+        $('#reset-lede').textContent = token
+            ? 'Choose a new password for your account.'
+            : 'Enter the email on your account and we’ll send you a link to choose a new one.';
         return null;
     }
 
@@ -2747,8 +2854,11 @@
         ensureGuest();
 
         // Room types live on the server; every view needs them, so load them before routing.
-        api.getRoomTypes().then((types) => {
+        // Whether real online payment is on (a failure just means the prototype form).
+        const paymentConfig = api.getPaymentConfig().then((c) => { onlinePayment = !!c.online; }).catch(() => {});
+        api.getRoomTypes().then(async (types) => {
             ROOM_TYPES = types;
+            await paymentConfig;
             window.addEventListener('hashchange', router);
             router();
         }).catch((err) => {

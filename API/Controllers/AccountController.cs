@@ -10,7 +10,7 @@ namespace API.Controllers;
 // druid_guest HttpOnly cookie (see GuestSession), separate from the staff session.
 [ApiController]
 [Route("api/account")]
-public class AccountController(GuestAccountStore accounts, HotelStore store) : ControllerBase
+public class AccountController(GuestAccountStore accounts, HotelStore store, EmailSender email) : ControllerBase
 {
     // POST api/account: create an account and sign in.
     [HttpPost]
@@ -32,6 +32,34 @@ public class AccountController(GuestAccountStore accounts, HotelStore store) : C
         var (account, stamp) = await accounts.SignInAsync(input);
         await GuestSession.SignInAsync(HttpContext, account, stamp);
         return account;
+    }
+
+    // POST api/account/forgot-password: emails a one-time reset link. The answer is the same
+    // whether or not the email has an account.
+    [HttpPost("forgot-password")]
+    [AllowAnonymous]
+    [EnableRateLimiting("guest-sign-in")]
+    public async Task<IActionResult> ForgotPassword(ForgotPasswordRequest input)
+    {
+        if (!EmailSender.IsConfigured)
+            return StatusCode(503, new { message = "Password reset by email isn’t set up yet. Please call the front desk." });
+        if (await accounts.StartResetAsync(input.Email) is { } reset)
+        {
+            var link = EmailSender.SiteUrl + "/#/reset?token=" + reset.Token;
+            var mail = GuestEmails.PasswordReset(reset.FirstName, link, GuestAccountStore.ResetMinutes);
+            await email.SendAsync(input.Email!.Trim(), mail.Subject, mail.Text, mail.Html);
+        }
+        return Ok(new { message = "If there’s an account for that email, we’ve sent a link to reset the password." });
+    }
+
+    // POST api/account/reset-password: sets a new password from a reset link.
+    [HttpPost("reset-password")]
+    [AllowAnonymous]
+    [EnableRateLimiting("guest-sign-in")]
+    public async Task<IActionResult> ResetPassword(ResetPasswordRequest input)
+    {
+        await accounts.ResetPasswordAsync(input.Token, input.Password);
+        return Ok(new { message = "Your password is changed. Sign in with the new one." });
     }
 
     // POST api/account/sign-out
