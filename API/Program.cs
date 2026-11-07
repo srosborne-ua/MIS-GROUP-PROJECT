@@ -141,7 +141,17 @@ app.UseHttpsRedirection();
 
 // Serve index.html at / plus its styles, scripts, and images.
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// Pages, scripts, and styles are rechecked on every load (a cheap 304 when unchanged), so guests
+// get a deploy right away instead of running an old index.js. Images keep normal caching.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        var ext = Path.GetExtension(ctx.File.Name).ToLowerInvariant();
+        if (ext is ".html" or ".js" or ".css")
+            ctx.Context.Response.Headers.CacheControl = "no-cache";
+    }
+});
 
 app.UseRateLimiter();
 
