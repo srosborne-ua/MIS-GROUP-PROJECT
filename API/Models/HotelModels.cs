@@ -54,6 +54,8 @@ public class Reservation
     public List<NightRate> Nights { get; set; } = [];
     public decimal Total { get; set; }
     public string PaymentStatus { get; set; } = "unpaid";
+    // How a paid stay was paid: "online" (card, through the site) or "at_hotel". Null while unpaid with no method recorded.
+    public string? PaymentMethod { get; set; }
     public bool CardOnFile { get; set; }
     public string Source { get; set; } = "web";
     public string Status { get; set; } = "confirmed";

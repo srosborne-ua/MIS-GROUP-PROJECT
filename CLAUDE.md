@@ -18,7 +18,7 @@ The long-term project is an "AI Concierge for Hospitality Bookings".
 
 **Also live:** RAG for the concierge (knowledge documents searched with model-written, validated read-only SQL as `druid_llm_ro`), plus room, room-type, rate, and room-unavailability views (no guest data), and availability and exact prices through `HotelStore`. Mr. Rogers has signed off on these.
 
-**Added after that:** guest accounts (guests sign in to book), and end-to-end booking in the concierge chat, confirmed with one Confirm booking button or by replying yes (Mr. Rogers stressed real function calling that books a room). `migrate-006` and `migrate-007` (per-room-type rates) have been run on Azure; any other database needs them before this code deploys. **`migrate-009` (guest password reset table) must be run on Azure before this code deploys.**
+**Added after that:** guest accounts (guests sign in to book), and end-to-end booking in the concierge chat, confirmed with one Confirm booking button or by replying yes (Mr. Rogers stressed real function calling that books a room). `migrate-006` and `migrate-007` (per-room-type rates) have been run on Azure; any other database needs them before this code deploys. **`migrate-009` (guest password reset table) and `migrate-010` (Stripe session id on `payment`) must be run on Azure before this code deploys.**
 
 Success definition from the client: the site should make life easy, both for guests booking and for staff managing.
 

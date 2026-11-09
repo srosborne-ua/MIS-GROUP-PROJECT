@@ -556,6 +556,25 @@ public class HotelStore(Db db, EmailSender email)
         return (await LoadReservationAsync(conn, bookingId))!;
     }
 
+    // Remembers the Stripe Checkout session just started for an unpaid stay (an id, not card data),
+    // so a later "Check payment" can ask Stripe whether it was paid.
+    public async Task RememberCheckoutSessionAsync(string id, string sessionId)
+    {
+        var bookingId = ParseId(ReservationPrefix, id);
+        if (bookingId == null) return;
+        await using var conn = await db.OpenAsync();
+        await conn.ExecuteAsync("UPDATE payment SET stripe_session_id = @Session WHERE booking_id = @Id AND status = 'unpaid'",
+            new { Id = bookingId, Session = sessionId });
+    }
+
+    // The Stripe session last started for this stay, or null if none was recorded.
+    public async Task<string?> GetCheckoutSessionAsync(string id)
+    {
+        var bookingId = ParseId(ReservationPrefix, id) ?? throw new HotelRuleException("We couldn’t find reservation " + id + ".", notFound: true);
+        await using var conn = await db.OpenAsync();
+        return await conn.QuerySingleOrDefaultAsync<string?>("SELECT stripe_session_id FROM payment WHERE booking_id = @Id", new { Id = bookingId });
+    }
+
     // Emails the guest and records what really happened in the reservation's message log.
     private async Task SendNoticeAsync(MySqlConnection conn, int bookingId, string to,
         (string Subject, string Text, string Html) mail, string what)
@@ -967,7 +986,7 @@ public class HotelStore(Db db, EmailSender email)
         SELECT b.id, r.room_number, t.code, b.check_in, b.check_out, b.guest_count, b.status, b.source,
                b.special_requests, b.total, b.created_at,
                b.guest_first_name AS first_name, b.guest_last_name AS last_name, g.email, b.guest_phone AS phone,
-               p.status AS payment_status, p.card_on_file
+               p.status AS payment_status, p.method AS payment_method, p.card_on_file
         """ + "\n" + BookingFrom;
 
     // One reservation with its nightly rates and messages, or null if there's no such booking.
@@ -1005,6 +1024,7 @@ public class HotelStore(Db db, EmailSender email)
         },
         Total = b.Total,
         PaymentStatus = b.PaymentStatus ?? "unpaid",
+        PaymentMethod = b.PaymentMethod,
         CardOnFile = b.CardOnFile ?? false,
         Source = b.Source,
         Status = b.Status,
@@ -1129,6 +1149,7 @@ public class HotelStore(Db db, EmailSender email)
         public string Email { get; set; } = "";
         public string Phone { get; set; } = "";
         public string? PaymentStatus { get; set; }
+        public string? PaymentMethod { get; set; }
         public bool? CardOnFile { get; set; }
     }
 

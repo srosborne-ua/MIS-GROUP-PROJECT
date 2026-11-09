@@ -302,6 +302,9 @@
             return request('/reservations/' + seg(resId) + '/payment-status', { method: 'PUT', body: { status } });
         },
 
+        // Staff: ask Stripe whether this stay's latest checkout was paid, and record it if so.
+        checkPayment(resId) { return request('/reservations/' + seg(resId) + '/check-payment', { method: 'POST' }); },
+
         sendGuestMessage(resId, text) {
             return request('/reservations/' + seg(resId) + '/messages', { method: 'POST', body: { text: String(text) } });
         },
@@ -453,6 +456,9 @@
         confirmCheckout(resId, sessionId) {
             return request('/account/reservations/' + seg(resId) + '/checkout/confirm', { method: 'POST', body: { sessionId: String(sessionId) } });
         },
+
+        // Guest: "I already paid": the server asks Stripe about this stay's latest checkout.
+        checkMyPayment(resId) { return request('/account/reservations/' + seg(resId) + '/checkout/check', { method: 'POST' }); },
 
         payReservation(resId, cardOnFile) {
             return request('/account/reservations/' + seg(resId) + '/pay', { method: 'POST', body: { cardOnFile: !!cardOnFile } });
@@ -1084,7 +1090,7 @@
                         '<div><dt>Depart</dt><dd>' + esc(fmtDate(r.checkout)) + ', by 11 AM</dd></div>' +
                         '<div><dt>Guests</dt><dd>' + r.guests + '</dd></div>' +
                         '<div><dt>Total</dt><dd>' + money(r.total) + '</dd></div>' +
-                        '<div><dt>Payment</dt><dd>' + (r.paymentStatus === 'paid' ? 'Paid in full' : 'Due at check-in') +
+                        '<div><dt>Payment</dt><dd>' + paymentLabel(r) +
                             (r.cardOnFile ? ' · Card kept on file' : '') + '</dd></div>' +
                         (r.guest.requests ? '<div><dt>Requests</dt><dd>' + esc(r.guest.requests) + '</dd></div>' : '') +
                     '</dl>' +
@@ -1100,10 +1106,29 @@
                     '<p class="fine-print">Prototype: emails are simulated and recorded in the Staff Portal.</p>') +
                     '<div class="form-actions">' +
                         (canPayNow(r) && guestUser ? '<a class="btn" href="#/pay?id=' + encodeURIComponent(r.id) + '">Pay now</a>' : '') +
+                        (canPayNow(r) && guestUser && onlinePayment ? '<button type="button" class="btn btn--ghost" data-action="check-payment">Already paid? Check payment</button>' : '') +
                         '<a class="btn btn--ghost" href="#/account">Your stays</a>' +
                         '<a class="btn btn--ghost" href="#/home">Back to the hotel</a></div>' +
+                    '<p class="status-line" id="check-payment-note" role="status" hidden></p>' +
                 '</div>' +
             '</div>';
+        const checkButton = $('[data-action="check-payment"]', body);
+        if (checkButton) {
+            checkButton.addEventListener('click', async () => {
+                const note = $('#check-payment-note', body);
+                checkButton.disabled = true;
+                note.hidden = false;
+                note.textContent = 'Checking with Stripe…';
+                try {
+                    lastBooking = await api.checkMyPayment(r.id);
+                    await renderConfirmation(route);
+                } catch (err) {
+                    if (err.status === 401) return onGuestSignedOut();
+                    note.textContent = err.message;
+                    checkButton.disabled = false;
+                }
+            });
+        }
     }
 
     /* ---------- Pay now ---------- */
@@ -1402,7 +1427,7 @@
                 '<div class="stay__side">' +
                     '<p class="stay__total">' + money(r.total) + '</p>' +
                     '<p class="result__meta">' + esc(r.id) + ' · ' +
-                        (cancelled ? 'Cancelled' : r.paymentStatus === 'paid' ? 'Paid' : 'Due at check-in') + '</p>' +
+                        (cancelled ? 'Cancelled' : paymentLabel(r)) + '</p>' +
                     (cancelled ? '' : '<p class="stay__links">' +
                         '<a href="#/confirmation?id=' + encodeURIComponent(r.id) + '">Details' +
                             '<span class="visually-hidden"> for ' + esc(r.id) + '</span></a>' +
@@ -1665,6 +1690,9 @@
                 if (button.dataset.action === 'cancel') {
                     if (!window.confirm('Cancel reservation ' + id + '? The room will be released.')) return;
                     await api.cancelReservation(id);
+                }
+                if (button.dataset.action === 'check-payment') {
+                    await api.checkPayment(id);
                 }
                 if (button.dataset.action === 'toggle-paid') {
                     await api.setPaymentStatus(id, button.dataset.next);
@@ -2013,18 +2041,26 @@
 
     /* Reservations panel */
 
-    function paymentBadge(r) {
-        return r.paymentStatus === 'paid'
-            ? '<span class="badge badge--paid">Paid</span>'
-            : '<span class="badge badge--unpaid">Not paid</span>';
+    // One wording for payment everywhere: how it was paid, or that it is still owed.
+    function paymentLabel(r) {
+        if (r.paymentStatus !== 'paid') return 'Due at check-in';
+        return r.paymentMethod === 'online' ? 'Paid by card online' : 'Paid at hotel';
     }
 
+    function paymentBadge(r) {
+        return r.paymentStatus === 'paid'
+            ? '<span class="badge badge--paid">' + paymentLabel(r) + '</span>'
+            : '<span class="badge badge--unpaid" title="Nothing paid yet. The guest pays at check-in, or online from their account.">' + paymentLabel(r) + '</span>';
+    }
+
+    // Stay status comes from the dates only: the hotel doesn't log arrivals or departures.
     function statusBadge(r) {
         const t = todayISO();
-        if (r.status === 'cancelled') return '<span class="badge badge--muted">Cancelled</span>';
-        if (r.checkout <= t) return '<span class="badge badge--muted">Checked out</span>';
-        if (r.checkin <= t) return '<span class="badge">In house</span>';
-        return '<span class="badge">Confirmed</span>';
+        if (r.status === 'cancelled') return '<span class="badge badge--muted" title="This reservation was cancelled.">Cancelled</span>';
+        if (r.checkout <= t) return '<span class="badge badge--muted" title="The check-out date has passed.">Departed</span>';
+        if (r.checkin === t) return '<span class="badge badge--live" title="Arrives today.">Arriving today</span>';
+        if (r.checkin < t) return '<span class="badge badge--live" title="The stay has started and the check-out date is still ahead.">Staying now</span>';
+        return '<span class="badge" title="Booked, arriving on a later date.">Upcoming</span>';
     }
 
     async function renderReservationsPanel(id) {
@@ -2032,7 +2068,7 @@
         const open = board.filter((r) => r.status === 'available').length;
         $('#staff-stats').innerHTML =
             '<div><dt>Arrivals today</dt><dd>' + stats.arrivals + '</dd></div>' +
-            '<div><dt>In house tonight</dt><dd>' + stats.inHouse + '</dd></div>' +
+            '<div><dt>Staying tonight</dt><dd>' + stats.inHouse + '</dd></div>' +
             '<div><dt>Open tonight</dt><dd>' + open + ' of ' + board.length + '</dd></div>' +
             '<div><dt>Not yet paid</dt><dd>' + money(stats.outstanding) + '</dd></div>';
 
@@ -2086,7 +2122,8 @@
                 '</div>' +
                 '<div class="inline-actions">' +
                     '<button type="button" class="btn btn--ghost" data-action="toggle-paid" data-id="' + esc(r.id) + '" data-next="' + (r.paymentStatus === 'paid' ? 'unpaid' : 'paid') + '">' +
-                        (r.paymentStatus === 'paid' ? 'Mark as not paid' : 'Mark as paid') + '</button>' +
+                        (r.paymentStatus === 'paid' ? 'Mark as not paid' : 'Mark as paid at hotel') + '</button>' +
+                    (r.status !== 'cancelled' && r.paymentStatus !== 'paid' && onlinePayment ? '<button type="button" class="btn btn--ghost" data-action="check-payment" data-id="' + esc(r.id) + '">Check payment with Stripe</button>' : '') +
                     (canEdit ? '<button type="button" class="btn btn--ghost" data-action="edit-guest" data-id="' + esc(r.id) + '">Edit guest details</button>' : '') +
                     (canCancel ? '<button type="button" class="btn btn--danger" data-action="cancel" data-id="' + esc(r.id) + '">Cancel reservation</button>' : '') +
                 '</div>' +
@@ -2203,7 +2240,11 @@
                         '<td data-label="Status">' + statusBadge(r) + '</td>' +
                     '</tr>').join('') +
                 '</tbody>' +
-            '</table>';
+            '</table>' +
+            '<p class="table-legend"><strong>Status</strong> is worked out from the dates: ' +
+                '<em>Upcoming</em> arrives on a later date; <em>Arriving today</em> checks in today; ' +
+                '<em>Staying now</em> has arrived and not yet checked out; <em>Departed</em> is past its check-out date. ' +
+                '<strong>Payment</strong> is <em>Paid by card online</em>, <em>Paid at hotel</em>, or <em>Due at check-in</em> (nothing paid yet).</p>';
     }
 
     /* New reservation panel */

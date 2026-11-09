@@ -27,8 +27,8 @@ public class StripePayments(ILogger<StripePayments> log)
     public static long Cents(decimal amount) => (long)Math.Round(amount * 100m, MidpointRounding.AwayFromZero);
 
     // Starts a Checkout Session for the reservation's total, as stored in our database,
-    // and returns the Stripe page to send the guest to.
-    public async Task<string> CreateCheckoutAsync(Reservation r, string accountEmail, string roomName)
+    // and returns the Stripe page to send the guest to plus the session's id.
+    public async Task<(string Url, string SessionId)> CreateCheckoutAsync(Reservation r, string accountEmail, string roomName)
     {
         var back = EmailSender.SiteUrl + "/#/pay?id=" + Uri.EscapeDataString(r.Id);
         var options = new SessionCreateOptions
@@ -61,7 +61,7 @@ public class StripePayments(ILogger<StripePayments> log)
             ]
         };
         var session = await new SessionService(Client).CreateAsync(options);
-        return session.Url;
+        return (session.Url, session.Id);
     }
 
     // A Checkout Session that Stripe says is paid, or null. Asked of Stripe directly, so the

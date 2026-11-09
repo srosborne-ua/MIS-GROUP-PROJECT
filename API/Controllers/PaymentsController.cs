@@ -36,7 +36,60 @@ public class PaymentsController(HotelStore store, StripePayments stripe, ILogger
         var guest = await GuestSession.CurrentAsync(HttpContext) ?? throw new HotelRuleException(GuestSession.SignInMessage);
         var types = await store.GetRoomTypesAsync();
         var roomName = types.TryGetValue(reservation.Type, out var type) ? type.Name : "Room";
-        return new { url = await stripe.CreateCheckoutAsync(reservation, guest.Email, roomName) };
+        var (url, sessionId) = await stripe.CreateCheckoutAsync(reservation, guest.Email, roomName);
+        try
+        {
+            await store.RememberCheckoutSessionAsync(reservation.Id, sessionId);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // Only the "Check payment" shortcut needs this; never block a guest from paying over it.
+            log.LogWarning("Couldn’t record the Stripe session for {Reservation}: {Error}", reservation.Id, e.Message);
+        }
+        return new { url };
+    }
+
+    // POST api/account/reservations/DC-1042/checkout/check: "Check payment" for a guest's own stay.
+    [HttpPost("api/account/reservations/{id}/checkout/check")]
+    [Authorize(AuthenticationSchemes = GuestSession.Scheme)]
+    [EnableRateLimiting("booking")]
+    public async Task<Reservation> CheckGuestPayment(string id)
+    {
+        var reservation = await store.GetAccountReservationAsync(GuestSession.AccountId(User), id);
+        return await CheckPaymentAsync(reservation);
+    }
+
+    // POST api/reservations/DC-1042/check-payment: "Check payment" for staff (signed-in employees only).
+    [HttpPost("api/reservations/{id}/check-payment")]
+    public async Task<Reservation> CheckStaffPayment(string id) => await CheckPaymentAsync(await store.GetReservationAsync(id));
+
+    // Asks Stripe about the stay's latest Checkout session. Safe to repeat: a paid stay stays paid once.
+    private async Task<Reservation> CheckPaymentAsync(Reservation reservation)
+    {
+        if (reservation.PaymentStatus == "paid") return reservation;
+        if (reservation.Status == "cancelled") throw new HotelRuleException("That reservation was cancelled, so there’s nothing to pay.");
+        if (!StripePayments.IsConfigured) throw new HotelRuleException("Online payment isn’t set up, so there’s nothing to check.");
+        var sessionId = await store.GetCheckoutSessionAsync(reservation.Id);
+        if (string.IsNullOrEmpty(sessionId))
+            throw new HotelRuleException("No online payment has been started for this stay yet.");
+        var paid = await stripe.GetPaidAsync(sessionId);
+        if (paid is not { } p || p.ReservationId != reservation.Id)
+            throw new HotelRuleException("Stripe hasn’t received that payment yet. If the guest was charged, try again in a minute.");
+        return await RecordPaidAsync(reservation.Id, p.AmountCents);
+    }
+
+    // MarkPaidOnlineAsync, but a refused payment (for example, the amount doesn’t match) is logged, not silent.
+    private async Task<Reservation> RecordPaidAsync(string reservationId, long amountCents)
+    {
+        try
+        {
+            return await store.MarkPaidOnlineAsync(reservationId, amountCents);
+        }
+        catch (HotelRuleException e)
+        {
+            log.LogWarning("Stripe payment for {Reservation} not recorded: {Reason}", reservationId, e.Message);
+            throw;
+        }
     }
 
     // POST api/account/reservations/DC-1042/checkout/confirm: the guest is back from Stripe.
@@ -51,7 +104,7 @@ public class PaymentsController(HotelStore store, StripePayments stripe, ILogger
         var paid = string.IsNullOrWhiteSpace(input.SessionId) ? null : await stripe.GetPaidAsync(input.SessionId.Trim());
         if (paid is not { } p || p.ReservationId != reservation.Id)
             throw new HotelRuleException("We haven’t received that payment yet. If you were charged, it will show up here within a minute or two.");
-        return await store.MarkPaidOnlineAsync(reservation.Id, p.AmountCents);
+        return await RecordPaidAsync(reservation.Id, p.AmountCents);
     }
 
     // POST api/payments/webhook: Stripe tells us a payment finished, even if the guest closed the tab.

@@ -176,6 +176,7 @@ CREATE TABLE payment (
     booking_id    INT UNSIGNED NOT NULL,
     status        ENUM('unpaid','paid') NOT NULL DEFAULT 'unpaid',
     method        ENUM('online','at_hotel') NULL,
+    stripe_session_id VARCHAR(255) NULL,  -- latest Stripe Checkout session for this stay (an id, not card data)
     card_on_file  BOOLEAN NOT NULL DEFAULT FALSE,
     amount        DECIMAL(10,2) NOT NULL,
     paid_at       DATETIME NULL,

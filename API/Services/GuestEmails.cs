@@ -29,7 +29,7 @@ public static class GuestEmails
             "Hello " + r.Guest.FirstName + ", your stay is booked.",
             "Reservation " + r.Id + " · room " + r.Room,
             Day(r.Checkin) + " to " + Day(r.Checkout) + " (" + nights + (nights == 1 ? " night" : " nights") + ", " + r.Guests + (r.Guests == 1 ? " guest" : " guests") + ")",
-            "Total: " + Money(r.Total) + " before taxes. " + (r.PaymentStatus == "paid" ? "Paid." : "Due at check-in."),
+            "Total: " + Money(r.Total) + " before taxes. " + (r.PaymentStatus != "paid" ? "Due at check-in." : r.PaymentMethod == "online" ? "Paid by card online." : "Paid at the hotel."),
             "To change or cancel, call the front desk."
         };
         var (t, h) = Wrap("You’re booked.", lines, EmailSender.SiteUrl + "/#/account", "See your stays");

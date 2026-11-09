@@ -2,3 +2,9 @@
 .env.*
 .DS_Store
 !.env.example
+
+# Claude Code personal settings
+.claude/settings.local.json
+
+# Presentation material (screenshots and notes), not for the repo
+presentation-notes/

@@ -1129,6 +1129,10 @@ input[type="checkbox"] {
 
 .badge--muted { color: var(--ink-soft); border-color: var(--line); }
 
+.badge--live { border-color: var(--ink); border-width: 2px; padding: calc(0.1rem - 1px) calc(0.5rem - 1px); }
+
+.table-legend { margin-top: 1rem; font-size: 0.875rem; color: var(--ink-soft); max-width: 70ch; }
+
 .detail {
     border-top: 1px solid var(--ink);
     border-bottom: 1px solid var(--line);
