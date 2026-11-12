@@ -1303,6 +1303,7 @@
 
     function updateAccountNav() {
         $$('[data-account-link]').forEach((a) => { a.textContent = guestUser ? 'Your stays' : 'Sign in'; });
+        $$('[data-guest-only]').forEach((el) => { el.hidden = !guestUser; });
     }
 
     // Called by request() on a guest 401 (the guest session ended), and on sign-out.
@@ -2895,6 +2896,18 @@
 
         // Whether a guest is signed in, for the menu's "Sign in" / "Your stays" link.
         ensureGuest();
+
+        // Sign out from the menu, on any page.
+        $('[data-action="nav-sign-out"]').addEventListener('click', async () => {
+            try {
+                await api.signOutGuest();
+            } catch (err) {
+                showNotice($('#api-offline'), err.message);
+                return;
+            }
+            onGuestSignedOut();
+            router();
+        });
 
         // Room types live on the server; every view needs them, so load them before routing.
         // Whether real online payment is on (a failure just means the prototype form).

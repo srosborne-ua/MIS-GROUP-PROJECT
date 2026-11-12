@@ -22,7 +22,7 @@ The long-term project is an "AI Concierge for Hospitality Bookings".
 
 Success definition from the client: the site should make life easy, both for guests booking and for staff managing.
 
-See [README.md](README.md) for the route table, hotel model details, and the running list of assumptions.
+See [README.md](README.md) for the route table and hotel model details.
 
 ## Running
 
@@ -221,7 +221,7 @@ Every item must remain covered:
 - Block off rooms for events
 - View and edit cost data and default rates
 
-**Staff sign-in** (README assumptions 30–33): employees sign in with email and password; the Employees tab (`#/staff/employees`) has the week's shift schedule and manages accounts.
+**Staff sign-in:** employees sign in with email and password; the Employees tab (`#/staff/employees`) has the week's shift schedule and manages accounts.
 
 - **Roles:** `manager` or `staff` (`EmployeeStore.Manager` / `Staff`). Manager-only endpoints use `[Authorize(Roles = EmployeeStore.Manager)]`: account changes, shift changes, and Reset sample data. The client hides `[data-manager-only]` controls for staff, but the API is what enforces it. A manager can't change their own role or deactivate themselves.
 - **Shifts** live in `ShiftStore` (`shift` table, ids `S-n`). Adding one locks the employee row and re-checks overlaps in one transaction, like bookings. An end time earlier than the start means overnight.
@@ -259,4 +259,4 @@ Required on every change:
 
 ## Assumptions
 
-The current build offers pay now (UI only) or pay at the hotel on the booking page, and Pay now (`#/pay?id=…`, `POST api/account/reservations/{id}/pay`) for any of a guest's unpaid upcoming stays; chat bookings start due at check-in. The full assumptions list lives in the README. When you make a new assumption, add it to that list.
+The current build offers pay now (UI only) or pay at the hotel on the booking page, and Pay now (`#/pay?id=…`, `POST api/account/reservations/{id}/pay`) for any of a guest's unpaid upcoming stays; chat bookings start due at check-in. The README no longer keeps an assumptions list; record a new assumption in the PR description or here.
