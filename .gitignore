@@ -8,3 +8,6 @@
 
 # Presentation material (screenshots and notes), not for the repo
 presentation-notes/
+
+# Email setup handoff (contains the Azure Communication Services key)
+azure-email-setup-handoff.md
