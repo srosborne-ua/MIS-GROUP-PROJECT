@@ -55,7 +55,7 @@ API/                          ASP.NET Core Web API (.NET 10, controllers); also 
 ├── Services/EmployeeStore.cs Staff accounts, roles, and sign-in rules
 ├── Services/GuestAccountStore.cs   Guest accounts and sign-in rules
 ├── Services/GuestSession.cs  Guest sign-in cookie (its own scheme, never the default)
-├── Services/EmailSender.cs   SMTP sending from env vars (no-op when unset); GuestEmails.cs has the message text
+├── Services/EmailSender.cs   Azure Communication Services email from env vars (no-op when unset); GuestEmails.cs has the message text
 ├── Services/StripePayments.cs   Stripe Checkout sessions (on only when STRIPE_SECRET_KEY is set); PaymentsController has the endpoints and webhook
 ├── Services/ShiftStore.cs    Staff shift schedule rules
 ├── Services/StaffSession.cs  Sign-in cookie setup and the per-minute session re-check
@@ -168,7 +168,7 @@ Client/
 - **Validate on the server:** every date range (including the single-room check), holds and blocks (at most 366 nights, not in the past, within about three years ahead), payment status values, and cancelled-reservation edits. Deletes of holds, blocks, and special rates must report "not found" when 0 rows change.
 - **Concierge spend limits** (keep them when changing the concierge): 6 messages/min and 60/hour per IP, 2 replies in progress per IP, and a site-wide daily cap of 1,500 (`CONCIERGE_DAILY_LIMIT`), all in memory (`ConciergeLimits`, so keep one instance). History is capped at 6 messages and a reply at 6 tool turns; the last turn runs with tools turned off so the model must answer. Don't raise these without considering cost, and keep the Anthropic workspace spend limit in place.
 - **Confirm booking presses** (`POST api/concierge/bookings`): 10 per 10 minutes per IP. Guest sign-in and new accounts: 10 per 15 minutes per IP (`guest-sign-in`, separate from staff `sign-in`).
-- **Known gaps:** sequential reservation IDs (only staff or the booking's own guest account can look one up), guest emails aren't verified, guests have an emailed "forgot password" link (needs `SMTP_*` set) but staff don't (a manager resets staff passwords), no rate limit on `POST api/reservations` itself, no CSP or clickjacking headers.
+- **Known gaps:** sequential reservation IDs (only staff or the booking's own guest account can look one up), guest emails aren't verified, guests have an emailed "forgot password" link (needs `ACS_CONNECTION_STRING` and `ACS_SENDER_ADDRESS` set) but staff don't (a manager resets staff passwords), no rate limit on `POST api/reservations` itself, no CSP or clickjacking headers.
 
 ### AI Concierge
 
