@@ -10,14 +10,16 @@ public static class GuestEmails
     private static string Money(decimal v) => v.ToString("C2", System.Globalization.CultureInfo.GetCultureInfo("en-US"));
     private static string Day(DateOnly d) => d.ToString("ddd, MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture);
 
+    private const string NoReply = "This is an automated message from an unmonitored address, so please don’t reply. For help, call the front desk.";
+
     private static (string Text, string Html) Wrap(string heading, string[] lines, string? link = null, string? linkLabel = null)
     {
         var text = heading + "\n\n" + string.Join("\n", lines) + (link != null ? "\n\n" + linkLabel + ": " + link : "") +
-                   "\n\nDruid City Hotel, Tuscaloosa, Alabama";
+                   "\n\nDruid City Hotel, Tuscaloosa, Alabama\n" + NoReply;
         var html = "<div style=\"font-family:Georgia,serif;color:#1c1b19;max-width:34rem\"><h2 style=\"font-weight:normal\">" + H(heading) + "</h2>" +
                    string.Concat(lines.Select(l => "<p style=\"font-family:Arial,sans-serif;line-height:1.5\">" + H(l) + "</p>")) +
                    (link != null ? "<p><a href=\"" + H(link) + "\" style=\"color:#8c2f39\">" + H(linkLabel ?? link) + "</a></p>" : "") +
-                   "<p style=\"font-family:Arial,sans-serif;color:#6b665e;font-size:0.85rem\">Druid City Hotel, Tuscaloosa, Alabama</p></div>";
+                   "<p style=\"font-family:Arial,sans-serif;color:#6b665e;font-size:0.85rem\">Druid City Hotel, Tuscaloosa, Alabama<br>" + H(NoReply) + "</p></div>";
         return (text, html);
     }
 
