@@ -535,15 +535,17 @@ public class HotelStore(Db db, EmailSender email)
         var bookingId = ParseId(ReservationPrefix, id) ?? throw notFound;
         await using var conn = await db.OpenAsync();
         await using var tx = await conn.BeginTransactionAsync();
-        var row = await conn.QuerySingleOrDefaultAsync<(decimal Total, string Status)>(
+        var row = await conn.QuerySingleOrDefaultAsync<(decimal Total, string Status, string BookingStatus)>(
             """
-            SELECT b.total AS Total, COALESCE(p.status, 'unpaid') AS Status
+            SELECT b.total AS Total, COALESCE(p.status, 'unpaid') AS Status, b.status AS BookingStatus
             FROM booking b LEFT JOIN payment p ON p.booking_id = b.id
             WHERE b.id = @Id FOR UPDATE
             """, new { Id = bookingId }, tx);
         if (row.Status == null) throw notFound;
         if (row.Status != "paid")
         {
+            if (row.BookingStatus == "cancelled")
+                throw new HotelRuleException("That reservation was cancelled, so the payment wasn’t recorded.");
             if (StripePayments.Cents(row.Total) != amountCents)
                 throw new HotelRuleException("The amount paid doesn’t match the reservation total.");
             var now = DateTime.UtcNow;
@@ -590,6 +592,42 @@ public class HotelStore(Db db, EmailSender email)
         await using var conn = await db.OpenAsync();
         await using var tx = await conn.BeginTransactionAsync();
         var booking = await LockReservationAsync(conn, tx, id);
+        await CancelLockedAsync(conn, tx, booking, "Reservation cancelled.");
+        await tx.CommitAsync();
+        return await NotifyCancelledAsync(conn, booking.Id);
+    }
+
+    // A guest cancels one of their own upcoming, unpaid stays. Paid stays go through the front
+    // desk (there is no refund path yet), and staff-made bookings have no account to match.
+    public async Task<Reservation> CancelAccountReservationAsync(int accountId, string id)
+    {
+        var notFound = new HotelRuleException("We couldn’t find reservation " + id + " on your account.", notFound: true);
+        var bookingId = ParseId(ReservationPrefix, id) ?? throw notFound;
+        await using var conn = await db.OpenAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        var row = await conn.QuerySingleOrDefaultAsync<PayableBooking>(
+            """
+            SELECT b.status, b.check_out, COALESCE(p.status, 'unpaid') AS payment_status
+            FROM booking b LEFT JOIN payment p ON p.booking_id = b.id
+            WHERE b.id = @Id AND b.guest_account_id = @AccountId
+            FOR UPDATE OF b
+            """,
+            new { Id = bookingId, AccountId = accountId }, tx) ?? throw notFound;
+        if (row.Status == "cancelled") throw new HotelRuleException("Reservation " + ReservationPrefix + bookingId + " is already cancelled.");
+        if (row.PaymentStatus == "paid")
+            throw new HotelRuleException("That stay is already paid, so please call the front desk to cancel it.");
+        if (DateOnly.FromDateTime(row.CheckOut) <= Today())
+            throw new HotelRuleException("That stay has ended, so it can’t be cancelled.");
+        await CancelLockedAsync(conn, tx, new LockedBooking { Id = bookingId, Status = row.Status }, "Cancelled by the guest from their account.");
+        await tx.CommitAsync();
+        var cancelled = await NotifyCancelledAsync(conn, bookingId);
+        cancelled.Messages = [];
+        return cancelled;
+    }
+
+    // Marks a locked booking cancelled and logs why. Reports exactly what happened.
+    private async Task CancelLockedAsync(MySqlConnection conn, MySqlTransaction tx, LockedBooking booking, string logMessage)
+    {
         var alreadyCancelled = new HotelRuleException("Reservation " + ReservationPrefix + booking.Id + " is already cancelled.");
         if (booking.Status == "cancelled") throw alreadyCancelled;
         var now = DateTime.UtcNow;
@@ -597,11 +635,14 @@ public class HotelStore(Db db, EmailSender email)
             "UPDATE booking SET status = 'cancelled', cancelled_at = @Now WHERE id = @Id AND status = 'confirmed'",
             new { booking.Id, Now = now }, tx);
         if (changed == 0) throw alreadyCancelled;
-        await AddMessageAsync(conn, tx, booking.Id, "system", "Reservation cancelled.", now);
-        await tx.CommitAsync();
-        var cancelled = (await LoadReservationAsync(conn, booking.Id))!;
-        await SendNoticeAsync(conn, booking.Id, cancelled.Guest.Email, GuestEmails.Cancellation(cancelled), "Cancellation notice");
-        return (await LoadReservationAsync(conn, booking.Id))!;
+        await AddMessageAsync(conn, tx, booking.Id, "system", logMessage, now);
+    }
+
+    private async Task<Reservation> NotifyCancelledAsync(MySqlConnection conn, int bookingId)
+    {
+        var cancelled = (await LoadReservationAsync(conn, bookingId))!;
+        await SendNoticeAsync(conn, bookingId, cancelled.Guest.Email, GuestEmails.Cancellation(cancelled), "Cancellation notice");
+        return (await LoadReservationAsync(conn, bookingId))!;
     }
 
     // Name, phone, requests, and guest count only. Dates, room, and price stay as booked,

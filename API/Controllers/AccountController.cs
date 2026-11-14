@@ -95,4 +95,11 @@ public class AccountController(GuestAccountStore accounts, HotelStore store, Ema
     [EnableRateLimiting("booking")]
     public Task<Reservation> PayReservation(string id, PayReservationRequest input) =>
         store.PayAccountReservationAsync(GuestSession.AccountId(User), id, input.CardOnFile);
+
+    // POST api/account/reservations/DC-1042/cancel: cancel an upcoming, unpaid stay.
+    [HttpPost("reservations/{id}/cancel")]
+    [Authorize(AuthenticationSchemes = GuestSession.Scheme)]
+    [EnableRateLimiting("booking")]
+    public Task<Reservation> CancelReservation(string id) =>
+        store.CancelAccountReservationAsync(GuestSession.AccountId(User), id);
 }

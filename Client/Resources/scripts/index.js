@@ -464,6 +464,11 @@
             return request('/account/reservations/' + seg(resId) + '/pay', { method: 'POST', body: { cardOnFile: !!cardOnFile } });
         },
 
+        // Guest: cancel one of their own upcoming, unpaid stays.
+        cancelMyReservation(resId) {
+            return request('/account/reservations/' + seg(resId) + '/cancel', { method: 'POST' });
+        },
+
         // The guest pressed Confirm booking on a concierge card. A room taken since the card
         // was shown rejects with status 409 and err.data.proposal, a fresh card (or null).
         confirmConciergeBooking(token) {
@@ -619,6 +624,7 @@
     }
 
     // An upcoming, unpaid stay the signed-in guest can pay for online.
+    const canCancelNow = (r) => !!r && r.status === 'confirmed' && r.paymentStatus !== 'paid' && r.checkout > todayISO();
     const canPayNow = (r) => !!r && r.status === 'confirmed' && r.paymentStatus !== 'paid' && r.checkout > todayISO();
 
     function showNotice(el, message) {
@@ -1071,7 +1077,7 @@
         }
         if (!r) {
             body.innerHTML = '<p class="lede">' + (id ? 'Your confirmation code is <strong>' + esc(id) + '</strong>. ' : '') +
-                'Keep it handy. Sign in to see the stays booked on your account, or call the front desk if you need to change one.</p>' +
+                'Keep it handy. Sign in to see the stays booked on your account, where you can cancel an unpaid stay, or call the front desk if you need to change one.</p>' +
                 '<div class="form-actions"><a class="btn" href="#/account">Your stays</a>' +
                 '<a class="btn btn--ghost" href="#/home">Back to the hotel</a></div>';
             return;
@@ -1435,12 +1441,37 @@
                         (canPayNow(r) ? ' · <a href="#/pay?id=' + encodeURIComponent(r.id) + '">Pay now' +
                             '<span class="visually-hidden"> for ' + esc(r.id) + '</span></a>' : '') +
                     '</p>') +
+                    (canCancelNow(r) ? '<p class="stay__links"><button type="button" class="btn btn--danger" data-action="cancel-stay" data-id="' + esc(r.id) + '">' +
+                        'Cancel stay<span class="visually-hidden"> ' + esc(r.id) + '</span></button></p>' : '') +
                 '</div>' +
             '</li>';
         }).join('') + '</ul>';
     }
 
     function setupAccount() {
+        // Cancel an unpaid upcoming stay from the list (the server re-checks every rule).
+        $('#account-upcoming').addEventListener('click', async (e) => {
+            const button = e.target.closest('[data-action="cancel-stay"]');
+            if (!button) return;
+            const id = button.dataset.id;
+            if (!window.confirm('Cancel reservation ' + id + '? The room will be released.')) return;
+            button.disabled = true;
+            const status = $('#account-status');
+            try {
+                await api.cancelMyReservation(id);
+            } catch (err) {
+                if (err.status !== 401) {
+                    button.disabled = false;
+                    status.textContent = err.message;
+                    status.focus();
+                    return;
+                }
+            }
+            await renderAccount({ params: new URLSearchParams() });
+            status.textContent = 'Reservation ' + id + ' was cancelled. ' + status.textContent;
+            status.focus();
+        });
+
         const sf = $('#guest-signin-form');
         sf.addEventListener('submit', async (e) => {
             e.preventDefault();
