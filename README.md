@@ -112,7 +112,7 @@ The browser talks only to our API, never to Anthropic or the database.
 | Holds, event blocks | `GET/POST api/holds` and `api/blocks`, `DELETE …/{id}` |
 | Rates | `GET/PUT api/rates`, `POST/DELETE api/rates/overrides`, `GET api/rates/preview` |
 | Staff, shifts | `api/auth/*`, `api/employees/*`, `api/shifts/*`, `POST api/demo/reset` |
-| Guest accounts | `api/account/*` (create, sign in/out, `me`, reservations, pay, forgot/reset password) |
+| Guest accounts | `api/account/*` (create, sign in/out, `me`, reservations, pay, cancel (unpaid upcoming stays only), forgot/reset password) |
 | Payments | Stripe Checkout and webhook endpoints in `PaymentsController` |
 | Concierge | `POST api/concierge` (streamed), `POST api/concierge/bookings` |
 

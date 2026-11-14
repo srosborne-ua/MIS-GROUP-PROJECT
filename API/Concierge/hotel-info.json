@@ -37,6 +37,12 @@
         "suite_rates": "The Master Suite: $250 per weeknight and $325 per weekend night by default, the most of any room."
     },
 
+    "emails": {
+        "confirmation": "Every booking sends the guest a confirmation email at the address on their account, whether it was made on the booking page, in this chat, or by staff. It has the reservation number, room, dates, total before taxes, and how it is paid, plus a link to 'Your stays'.",
+        "cancellation": "Cancelling a reservation sends a cancellation email.",
+        "password_reset": "'Forgot password' on the sign-in page emails a one-time reset link.",
+        "sender": "These are automated messages from a do-not-reply address, so guests shouldn't reply to them; for help they should call the front desk. They can land in spam, so guests who don't see one should check there. Their stays are always listed under 'Your stays' either way."
+    },
     "booking": {
         "account_required": "Guests need a hotel account to book: 'Sign in' in the site menu signs in or creates one (name, email, mobile phone, and a password of at least 8 characters). Booked stays are listed under 'Your stays' in the site menu.",
         "how_to_book": "Two ways. On the booking page ('Book a stay' in the site menu): choose check-in and check-out dates, optionally filter by bed type (king, queen, or twin; the master suites have a king bed) and floor (first, second, or third). The page lists each open room type with the full cost of the stay and a room picked for the guest, who can choose a different one. Or in this chat: the concierge finds a room and price, then shows a card with a Confirm booking button; nothing is booked until the guest presses it or replies yes.",
@@ -59,7 +65,7 @@
     "policies": {
         "check_in_time": "3:00 PM",
         "check_out_time": "11:00 AM",
-        "cancellation_policy": "TODO: cancellation policy",
+        "cancellation_policy": "Guests can cancel an upcoming stay that is not yet paid themselves under 'Your stays' in the site menu, any time before check-out; the room is released and a cancellation email is sent. To cancel a stay that is already paid, or to change a stay, call the front desk. TODO: any cancellation deadline, fee, or refund policy is not confirmed yet.",
         "pet_policy": "TODO: pet policy",
         "parking": "TODO: parking details (self-park, valet, cost)",
         "smoking": "TODO: smoking policy",

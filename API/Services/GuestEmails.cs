@@ -32,7 +32,9 @@ public static class GuestEmails
             "Reservation " + r.Id + " · room " + r.Room,
             Day(r.Checkin) + " to " + Day(r.Checkout) + " (" + nights + (nights == 1 ? " night" : " nights") + ", " + r.Guests + (r.Guests == 1 ? " guest" : " guests") + ")",
             "Total: " + Money(r.Total) + " before taxes. " + (r.PaymentStatus != "paid" ? "Due at check-in." : r.PaymentMethod == "online" ? "Paid by card online." : "Paid at the hotel."),
-            "To change or cancel, call the front desk."
+            r.PaymentStatus != "paid"
+                ? "You can cancel this stay from your account until check-in. To change it, call the front desk."
+                : "To change or cancel, call the front desk."
         };
         var (t, h) = Wrap("You’re booked.", lines, EmailSender.SiteUrl + "/#/account", "See your stays");
         return ("Your Druid City Hotel reservation " + r.Id, t, h);

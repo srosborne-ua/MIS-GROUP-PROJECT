@@ -1013,7 +1013,10 @@ input[type="checkbox"] {
     border-bottom: 1px solid var(--line);
     margin-bottom: 2.5rem;
     overflow-x: auto;
+    scrollbar-width: none;
 }
+
+.tabs::-webkit-scrollbar { display: none; }
 
 .tabs ul {
     list-style: none;
@@ -1021,6 +1024,16 @@ input[type="checkbox"] {
     display: flex;
     gap: 1.75rem;
     white-space: nowrap;
+}
+
+/* Wide screens: tabs wrap instead of scrolling, so no scrollbar is needed. */
+@media (min-width: 48rem) {
+    .tabs { overflow-x: visible; }
+
+    .tabs ul {
+        flex-wrap: wrap;
+        white-space: normal;
+    }
 }
 
 .tabs a {
